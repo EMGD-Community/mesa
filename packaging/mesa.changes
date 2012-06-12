@@ -1,0 +1,18 @@
+* Tue Jun 12 2012 Rusty Lynch <rusty.lynch@intel.com> 8.1.0+1+5f3f6
+- Update to new snapshot from git master
+
+* Wed May 30 2012 Anas Nashif <anas.nashif@intel.com> 20120504.0@5232d84
+- remove old changelog and rpmlint file
+
+* Wed May 30 2012 Anas Nashif <anas.nashif@intel.com> 20120504.0@6b24dc0
+- fixed spec for packaging
+
+* Fri May 04 2012 Yang Lin <lin.a.yang@intel.com> 20120504.0@d629c52
+- test release infrastructure
+
+* Wed May 02 2012 Ulf <ulf.hofemeier@intel.com> 20120504.0@94989c5
+- Moving files to packaging and extracing new tarball.
+
+* Sat Apr 28 2012 Prajwal Mohan <prajwal.karur.mohan@intel.com> 20120504.0@c995c49
+- Initial Import
+

@@ -5,7 +5,7 @@ Release:    1
 Group:      System/Libraries
 License:    MIT
 URL:        http://www.mesa3d.org/beta
-Source0:    MesaLib-%{version}.tar.bz2
+Source0:    %{name}-%{version}.tar.bz2
 Source1:    mesa-rpmlintrc
 BuildRequires:  pkgconfig(wayland-client)
 BuildRequires:  pkgconfig(libdrm)

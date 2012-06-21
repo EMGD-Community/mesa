@@ -72,6 +72,7 @@ Group:      System/Libraries
 Requires(post): /sbin/ldconfig
 Requires(postun): /sbin/ldconfig
 Provides:   libGL = %{version}-%{release}
+Obsoletes: simulator-opengl
 
 %description libGL
 Mesa libGL runtime library.
@@ -182,6 +183,7 @@ Group:      Development/Libraries
 Requires:   mesa-libGL = %{version}-%{release}
 Requires:   libx11-devel
 Provides:   libGL-devel
+Obsoletes:  simulator-opengl-devel
 
 %description libGL-devel
 Mesa OpenGL library development package

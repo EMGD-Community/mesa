@@ -1,3 +1,8 @@
+* Wed Jun 20 2012 Rusty Lynch <rusty.lynch@intel.com> 8.1.0+1+5f3f6
+- Adding Obsoletes tags for simulator-opengl to fix build breakage
+  caused by packages that explicitly attempt to pulling the simulator-opengl
+  package when building on Intel.
+
 * Tue Jun 12 2012 Rusty Lynch <rusty.lynch@intel.com> 8.1.0+1+5f3f6
 - Update to new snapshot from git master
 

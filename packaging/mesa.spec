@@ -246,6 +246,7 @@ make %{?jobs:-j%jobs}
 
 %install
 rm -rf %{buildroot}
+
 %make_install
 
 
@@ -254,6 +255,15 @@ rm -rf %{buildroot}
 
 %postun libGL -p /sbin/ldconfig
 
+%post libgbm -p /sbin/ldconfig
+rm -rf /usr/lib/libdricore.so
+#rm -rf /usr/lib/libglsl.so
+ln -sf /usr/lib/libdricore%{version}.so /usr/lib/libdricore.so
+#ln -sf /usr/lib/libglsl%{version}.so /usr/lib/libglsl.so
+
+%postun libgbm -p /sbin/ldconfig
+rm -rf /usr/lib/libdricore.so
+#rm -rf /usr/lib/libglsl.so
 
 %post libGLESv2 -p /sbin/ldconfig
 
@@ -326,8 +336,8 @@ rm -rf %{buildroot}
 %{_libdir}/libgbm.so.*
 %{_libdir}/gbm/*
 /etc/drirc
-%{_libdir}/dri/libdricore.so
-%{_libdir}/dri/libglsl.so
+%{_libdir}/libdricore%{version}.so*
+#%{_libdir}/libglsl%{version}.so*
 
 %files libgbm-devel
 %defattr(-,root,root,-)

@@ -1,3 +1,11 @@
+* Mon Aug 13 2012 Quanxian Wang <quanxian.wang@intel.com> - 8.1.0+1+5f3f6
+- The latest mesa will have not glsl libarary which is hold into 
+  libdricore in ligbm sub-package
+
+* Mon Aug 13 2012 Quanxian Wang <quanxian.wang@intel.com> - 8.1.0+1+5f3f6
+- Updating mesa to master (8.1.0+1+5f3f6)
+  Support VAAPI in IVI platform
+
 * Wed Jun 20 2012 Rusty Lynch <rusty.lynch@intel.com> 8.1.0+1+5f3f6
 - Adding Obsoletes tags for simulator-opengl to fix build breakage
   caused by packages that explicitly attempt to pulling the simulator-opengl

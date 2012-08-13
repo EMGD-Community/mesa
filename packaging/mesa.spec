@@ -1,3 +1,5 @@
+%define mesa_libversion 8.1.0
+
 Name:       mesa
 Summary:    Mesa graphics libraries
 Version:    8.1.0+1+5f3f6
@@ -257,13 +259,10 @@ rm -rf %{buildroot}
 
 %post libgbm -p /sbin/ldconfig
 rm -rf /usr/lib/libdricore.so
-#rm -rf /usr/lib/libglsl.so
-ln -sf /usr/lib/libdricore%{version}.so /usr/lib/libdricore.so
-#ln -sf /usr/lib/libglsl%{version}.so /usr/lib/libglsl.so
+ln -sf /usr/lib/libdricore%{mesa_libversion}.so /usr/lib/libdricore.so
 
 %postun libgbm -p /sbin/ldconfig
 rm -rf /usr/lib/libdricore.so
-#rm -rf /usr/lib/libglsl.so
 
 %post libGLESv2 -p /sbin/ldconfig
 
@@ -336,8 +335,7 @@ rm -rf /usr/lib/libdricore.so
 %{_libdir}/libgbm.so.*
 %{_libdir}/gbm/*
 /etc/drirc
-%{_libdir}/libdricore%{version}.so*
-#%{_libdir}/libglsl%{version}.so*
+%{_libdir}/libdricore%{mesa_libversion}.so*
 
 %files libgbm-devel
 %defattr(-,root,root,-)

@@ -46,6 +46,7 @@
 #include "main/fbobject.h"
 #include "main/feedback.h"
 #include "main/formats.h"
+#include "main/glformats.h"
 #include "main/image.h"
 #include "main/macros.h"
 #include "main/matrix.h"
@@ -181,6 +182,9 @@ struct save_state
    struct gl_feedback Feedback;
 #endif
 
+   /** MESA_META_MULTISAMPLE */
+   GLboolean MultisampleEnabled;
+
    /** Miscellaneous (always disabled) */
    GLboolean Lighting;
    GLboolean RasterDiscard;
@@ -283,7 +287,7 @@ struct gen_mipmap_state
 struct decompress_state
 {
    GLuint ArrayObj;
-   GLuint VBO, FBO, RBO;
+   GLuint VBO, FBO, RBO, Sampler;
    GLint Width, Height;
 };
 
@@ -319,6 +323,10 @@ struct gl_meta_state
    struct drawtex_state DrawTex;  /**< For _mesa_meta_DrawTex() */
 };
 
+static void meta_glsl_blit_cleanup(struct gl_context *ctx, struct blit_state *blit);
+static void cleanup_temp_texture(struct gl_context *ctx, struct temp_texture *tex);
+static void meta_glsl_clear_cleanup(struct gl_context *ctx, struct clear_state *clear);
+
 static GLuint
 compile_shader_with_debug(struct gl_context *ctx, GLenum target, const GLcharARB *source)
 {
@@ -335,12 +343,16 @@ compile_shader_with_debug(struct gl_context *ctx, GLenum target, const GLcharARB
       return shader;
 
    _mesa_GetShaderiv(shader, GL_INFO_LOG_LENGTH, &size);
-   if (size == 0)
+   if (size == 0) {
+      _mesa_DeleteObjectARB(shader);
       return 0;
+   }
 
    info = malloc(size);
-   if (!info)
+   if (!info) {
+      _mesa_DeleteObjectARB(shader);
       return 0;
+   }
 
    _mesa_GetProgramInfoLog(shader, size, NULL, info);
    _mesa_problem(ctx,
@@ -349,6 +361,7 @@ compile_shader_with_debug(struct gl_context *ctx, GLenum target, const GLcharARB
 		 info, source);
 
    free(info);
+   _mesa_DeleteObjectARB(shader);
 
    return 0;
 }
@@ -401,10 +414,15 @@ _mesa_meta_init(struct gl_context *ctx)
 void
 _mesa_meta_free(struct gl_context *ctx)
 {
-   /* Note: Any textures, VBOs, etc, that we allocate should get
-    * freed by the normal context destruction code.  But this would be
-    * the place to free other meta data someday.
-    */
+   GET_CURRENT_CONTEXT(old_context);
+   _mesa_make_current(ctx, NULL, NULL);
+   meta_glsl_blit_cleanup(ctx, &ctx->Meta->Blit);
+   meta_glsl_clear_cleanup(ctx, &ctx->Meta->Clear);
+   cleanup_temp_texture(ctx, &ctx->Meta->TempTex);
+   if (old_context)
+      _mesa_make_current(old_context, old_context->WinSysDrawBuffer, old_context->WinSysReadBuffer);
+   else
+      _mesa_make_current(NULL, NULL, NULL);
    free(ctx->Meta);
    ctx->Meta = NULL;
 }
@@ -719,6 +737,12 @@ _mesa_meta_begin(struct gl_context *ctx, GLbitfield state)
    }
 #endif
 
+   if (state & MESA_META_MULTISAMPLE) {
+      save->MultisampleEnabled = ctx->Multisample.Enabled;
+      if (ctx->Multisample.Enabled)
+         _mesa_set_enable(ctx, GL_MULTISAMPLE, GL_FALSE);
+   }
+
    /* misc */
    {
       save->Lighting = ctx->Light.Enabled;
@@ -1004,6 +1028,11 @@ _mesa_meta_end(struct gl_context *ctx)
    }
 #endif
 
+   if (state & MESA_META_MULTISAMPLE) {
+      if (ctx->Multisample.Enabled != save->MultisampleEnabled)
+         _mesa_set_enable(ctx, GL_MULTISAMPLE, save->MultisampleEnabled);
+   }
+
    /* misc */
    if (save->Lighting) {
       _mesa_set_enable(ctx, GL_LIGHTING, GL_TRUE);
@@ -1066,6 +1095,15 @@ init_temp_texture(struct gl_context *ctx, struct temp_texture *tex)
    assert(tex->MaxSize > 0);
 
    _mesa_GenTextures(1, &tex->TexObj);
+}
+
+static void
+cleanup_temp_texture(struct gl_context *ctx, struct temp_texture *tex)
+{
+   if (!tex->TexObj)
+     return;
+   _mesa_DeleteTextures(1, &tex->TexObj);
+   tex->TexObj = 0;
 }
 
 
@@ -1312,15 +1350,13 @@ blitframebuffer_texture(struct gl_context *ctx,
       if (readAtt && readAtt->Texture) {
          const struct gl_texture_object *texObj = readAtt->Texture;
          const GLuint srcLevel = readAtt->TextureLevel;
-         const GLenum minFilterSave = texObj->Sampler.MinFilter;
-         const GLenum magFilterSave = texObj->Sampler.MagFilter;
          const GLint baseLevelSave = texObj->BaseLevel;
          const GLint maxLevelSave = texObj->MaxLevel;
-         const GLenum wrapSSave = texObj->Sampler.WrapS;
-         const GLenum wrapTSave = texObj->Sampler.WrapT;
-         const GLenum srgbSave = texObj->Sampler.sRGBDecode;
          const GLenum fbo_srgb_save = ctx->Color.sRGBEnabled;
          const GLenum target = texObj->Target;
+         GLuint sampler, samplerSave =
+            ctx->Texture.Unit[ctx->Texture.CurrentUnit].Sampler ?
+            ctx->Texture.Unit[ctx->Texture.CurrentUnit].Sampler->Name : 0;
 
          if (drawAtt->Texture == readAtt->Texture) {
             /* Can't use same texture as both the source and dest.  We need
@@ -1335,6 +1371,9 @@ blitframebuffer_texture(struct gl_context *ctx,
             return mask;
          }
 
+         _mesa_GenSamplers(1, &sampler);
+         _mesa_BindSampler(ctx->Texture.CurrentUnit, sampler);
+
          /*
          printf("Blit from texture!\n");
          printf("  srcAtt %p  dstAtt %p\n", readAtt, drawAtt);
@@ -1343,18 +1382,18 @@ blitframebuffer_texture(struct gl_context *ctx,
 
          /* Prepare src texture state */
          _mesa_BindTexture(target, texObj->Name);
-         _mesa_TexParameteri(target, GL_TEXTURE_MIN_FILTER, filter);
-         _mesa_TexParameteri(target, GL_TEXTURE_MAG_FILTER, filter);
+         _mesa_SamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, filter);
+         _mesa_SamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, filter);
          if (target != GL_TEXTURE_RECTANGLE_ARB) {
             _mesa_TexParameteri(target, GL_TEXTURE_BASE_LEVEL, srcLevel);
             _mesa_TexParameteri(target, GL_TEXTURE_MAX_LEVEL, srcLevel);
          }
-         _mesa_TexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-         _mesa_TexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+         _mesa_SamplerParameteri(sampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+         _mesa_SamplerParameteri(sampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
 	 /* Always do our blits with no sRGB decode or encode.*/
 	 if (ctx->Extensions.EXT_texture_sRGB_decode) {
-	    _mesa_TexParameteri(target, GL_TEXTURE_SRGB_DECODE_EXT,
+	    _mesa_SamplerParameteri(sampler, GL_TEXTURE_SRGB_DECODE_EXT,
 				GL_SKIP_DECODE_EXT);
 	 }
          if (ctx->Extensions.EXT_framebuffer_sRGB) {
@@ -1414,20 +1453,16 @@ blitframebuffer_texture(struct gl_context *ctx,
          /* Restore texture object state, the texture binding will
           * be restored by _mesa_meta_end().
           */
-         _mesa_TexParameteri(target, GL_TEXTURE_MIN_FILTER, minFilterSave);
-         _mesa_TexParameteri(target, GL_TEXTURE_MAG_FILTER, magFilterSave);
          if (target != GL_TEXTURE_RECTANGLE_ARB) {
             _mesa_TexParameteri(target, GL_TEXTURE_BASE_LEVEL, baseLevelSave);
             _mesa_TexParameteri(target, GL_TEXTURE_MAX_LEVEL, maxLevelSave);
          }
-         _mesa_TexParameteri(target, GL_TEXTURE_WRAP_S, wrapSSave);
-         _mesa_TexParameteri(target, GL_TEXTURE_WRAP_T, wrapTSave);
-	 if (ctx->Extensions.EXT_texture_sRGB_decode) {
-	    _mesa_TexParameteri(target, GL_TEXTURE_SRGB_DECODE_EXT, srgbSave);
-	 }
 	 if (ctx->Extensions.EXT_framebuffer_sRGB && fbo_srgb_save) {
 	    _mesa_set_enable(ctx, GL_FRAMEBUFFER_SRGB_EXT, GL_TRUE);
 	 }
+
+         _mesa_BindSampler(ctx->Texture.CurrentUnit, samplerSave);
+         _mesa_DeleteSamplers(1, &sampler);
 
          /* Done with color buffer */
          mask &= ~GL_COLOR_BUFFER_BIT;
@@ -1601,6 +1636,21 @@ _mesa_meta_BlitFramebuffer(struct gl_context *ctx,
    if (mask) {
       _swrast_BlitFramebuffer(ctx, srcX0, srcY0, srcX1, srcY1,
                               dstX0, dstY0, dstX1, dstY1, mask, filter);
+   }
+}
+
+static void
+meta_glsl_blit_cleanup(struct gl_context *ctx, struct blit_state *blit)
+{
+   if (blit->ArrayObj) {
+      _mesa_DeleteVertexArraysAPPLE(1, &blit->ArrayObj);
+      blit->ArrayObj = 0;
+      _mesa_DeleteBuffersARB(1, &blit->VBO);
+      blit->VBO = 0;
+   }
+   if (blit->DepthFP) {
+      _mesa_DeletePrograms(1, &blit->DepthFP);
+      blit->DepthFP = 0;
    }
 }
 
@@ -1786,20 +1836,24 @@ meta_glsl_clear_init(struct gl_context *ctx, struct clear_state *clear)
 
    clear->ShaderProg = _mesa_CreateProgramObjectARB();
    _mesa_AttachShader(clear->ShaderProg, fs);
+   _mesa_DeleteObjectARB(fs);
    _mesa_AttachShader(clear->ShaderProg, vs);
+   _mesa_DeleteObjectARB(vs);
    _mesa_BindAttribLocationARB(clear->ShaderProg, 0, "position");
    _mesa_LinkProgramARB(clear->ShaderProg);
 
    clear->ColorLocation = _mesa_GetUniformLocationARB(clear->ShaderProg,
 						      "color");
 
-   if (ctx->API == API_OPENGL && ctx->Const.GLSLVersion >= 130) {
+   if (_mesa_is_desktop_gl(ctx) && ctx->Const.GLSLVersion >= 130) {
       vs = compile_shader_with_debug(ctx, GL_VERTEX_SHADER, vs_int_source);
       fs = compile_shader_with_debug(ctx, GL_FRAGMENT_SHADER, fs_int_source);
 
       clear->IntegerShaderProg = _mesa_CreateProgramObjectARB();
       _mesa_AttachShader(clear->IntegerShaderProg, fs);
+      _mesa_DeleteObjectARB(fs);
       _mesa_AttachShader(clear->IntegerShaderProg, vs);
+      _mesa_DeleteObjectARB(vs);
       _mesa_BindAttribLocationARB(clear->IntegerShaderProg, 0, "position");
 
       /* Note that user-defined out attributes get automatically assigned
@@ -1811,6 +1865,24 @@ meta_glsl_clear_init(struct gl_context *ctx, struct clear_state *clear)
 
       clear->IntegerColorLocation =
 	 _mesa_GetUniformLocationARB(clear->IntegerShaderProg, "color");
+   }
+}
+
+static void
+meta_glsl_clear_cleanup(struct gl_context *ctx, struct clear_state *clear)
+{
+   if (clear->ArrayObj == 0)
+      return;
+   _mesa_DeleteVertexArraysAPPLE(1, &clear->ArrayObj);
+   clear->ArrayObj = 0;
+   _mesa_DeleteBuffersARB(1, &clear->VBO);
+   clear->VBO = 0;
+   _mesa_DeleteObjectARB(clear->ShaderProg);
+   clear->ShaderProg = 0;
+
+   if (clear->IntegerShaderProg) {
+      _mesa_DeleteObjectARB(clear->IntegerShaderProg);
+      clear->IntegerShaderProg = 0;
    }
 }
 
@@ -1842,7 +1914,8 @@ _mesa_meta_glsl_Clear(struct gl_context *ctx, GLbitfield buffers)
 	       MESA_META_VERTEX |
 	       MESA_META_VIEWPORT |
 	       MESA_META_CLIP |
-	       MESA_META_CLAMP_FRAGMENT_COLOR);
+	       MESA_META_CLAMP_FRAGMENT_COLOR |
+               MESA_META_MULTISAMPLE);
 
    if (!(buffers & BUFFER_BITS_COLOR)) {
       /* We'll use colormask to disable color writes.  Otherwise,
@@ -2205,8 +2278,7 @@ _mesa_meta_DrawPixels(struct gl_context *ctx,
     * Determine if we can do the glDrawPixels with texture mapping.
     */
    fallback = GL_FALSE;
-   if (ctx->_ImageTransferState ||
-       ctx->Fog.Enabled) {
+   if (ctx->Fog.Enabled) {
       fallback = GL_TRUE;
    }
 
@@ -2241,6 +2313,7 @@ _mesa_meta_DrawPixels(struct gl_context *ctx,
          texIntFormat = GL_ALPHA;
          metaExtraSave = (MESA_META_COLOR_MASK |
                           MESA_META_DEPTH_TEST |
+                          MESA_META_PIXEL_TRANSFER |
                           MESA_META_SHADER |
                           MESA_META_STENCIL_TEST);
       }
@@ -2287,7 +2360,6 @@ _mesa_meta_DrawPixels(struct gl_context *ctx,
                           MESA_META_CLIP |
                           MESA_META_VERTEX |
                           MESA_META_VIEWPORT |
-			  MESA_META_CLAMP_FRAGMENT_COLOR |
                           metaExtraSave));
 
    newTex = alloc_texture(tex, width, height, texIntFormat);
@@ -3220,6 +3292,7 @@ decompress_texture_image(struct gl_context *ctx,
    struct vertex verts[4];
    GLuint fboDrawSave, fboReadSave;
    GLuint rbSave;
+   GLuint samplerSave;
 
    if (slice > 0) {
       assert(target == GL_TEXTURE_3D ||
@@ -3239,6 +3312,9 @@ decompress_texture_image(struct gl_context *ctx,
    rbSave = ctx->CurrentRenderbuffer ? ctx->CurrentRenderbuffer->Name : 0;
 
    _mesa_meta_begin(ctx, MESA_META_ALL & ~MESA_META_PIXEL_STORE);
+
+   samplerSave = ctx->Texture.Unit[ctx->Texture.CurrentUnit].Sampler ?
+         ctx->Texture.Unit[ctx->Texture.CurrentUnit].Sampler->Name : 0;
 
    /* Create/bind FBO/renderbuffer */
    if (decompress->FBO == 0) {
@@ -3287,6 +3363,22 @@ decompress_texture_image(struct gl_context *ctx,
       _mesa_BindBufferARB(GL_ARRAY_BUFFER_ARB, decompress->VBO);
    }
 
+   if (!decompress->Sampler) {
+      _mesa_GenSamplers(1, &decompress->Sampler);
+      _mesa_BindSampler(ctx->Texture.CurrentUnit, decompress->Sampler);
+      /* nearest filtering */
+      _mesa_SamplerParameteri(decompress->Sampler, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+      _mesa_SamplerParameteri(decompress->Sampler, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+      /* No sRGB decode or encode.*/
+      if (ctx->Extensions.EXT_texture_sRGB_decode) {
+         _mesa_SamplerParameteri(decompress->Sampler, GL_TEXTURE_SRGB_DECODE_EXT,
+                             GL_SKIP_DECODE_EXT);
+      }
+
+   } else {
+      _mesa_BindSampler(ctx->Texture.CurrentUnit, decompress->Sampler);
+   }
+
    setup_texture_coords(faceTarget, slice, width, height,
                         verts[0].tex,
                         verts[1].tex,
@@ -3312,26 +3404,14 @@ decompress_texture_image(struct gl_context *ctx,
 
    {
       /* save texture object state */
-      const GLenum minFilterSave = texObj->Sampler.MinFilter;
-      const GLenum magFilterSave = texObj->Sampler.MagFilter;
       const GLint baseLevelSave = texObj->BaseLevel;
       const GLint maxLevelSave = texObj->MaxLevel;
-      const GLenum wrapSSave = texObj->Sampler.WrapS;
-      const GLenum wrapTSave = texObj->Sampler.WrapT;
-      const GLenum srgbSave = texObj->Sampler.sRGBDecode;
 
       /* restrict sampling to the texture level of interest */
       _mesa_TexParameteri(target, GL_TEXTURE_BASE_LEVEL, texImage->Level);
       _mesa_TexParameteri(target, GL_TEXTURE_MAX_LEVEL, texImage->Level);
-      /* nearest filtering */
-      _mesa_TexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-      _mesa_TexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
       /* No sRGB decode or encode.*/
-      if (ctx->Extensions.EXT_texture_sRGB_decode) {
-         _mesa_TexParameteri(target, GL_TEXTURE_SRGB_DECODE_EXT,
-                             GL_SKIP_DECODE_EXT);
-      }
       if (ctx->Extensions.EXT_framebuffer_sRGB) {
          _mesa_set_enable(ctx, GL_FRAMEBUFFER_SRGB_EXT, GL_FALSE);
       }
@@ -3342,17 +3422,11 @@ decompress_texture_image(struct gl_context *ctx,
       /* Restore texture object state, the texture binding will
        * be restored by _mesa_meta_end().
        */
-      _mesa_TexParameteri(target, GL_TEXTURE_MIN_FILTER, minFilterSave);
-      _mesa_TexParameteri(target, GL_TEXTURE_MAG_FILTER, magFilterSave);
       if (target != GL_TEXTURE_RECTANGLE_ARB) {
          _mesa_TexParameteri(target, GL_TEXTURE_BASE_LEVEL, baseLevelSave);
          _mesa_TexParameteri(target, GL_TEXTURE_MAX_LEVEL, maxLevelSave);
       }
-      _mesa_TexParameteri(target, GL_TEXTURE_WRAP_S, wrapSSave);
-      _mesa_TexParameteri(target, GL_TEXTURE_WRAP_T, wrapTSave);
-      if (ctx->Extensions.EXT_texture_sRGB_decode) {
-         _mesa_TexParameteri(target, GL_TEXTURE_SRGB_DECODE_EXT, srgbSave);
-      }
+
    }
 
    /* read pixels from renderbuffer */
@@ -3379,6 +3453,8 @@ decompress_texture_image(struct gl_context *ctx,
 
    /* disable texture unit */
    _mesa_set_enable(ctx, target, GL_FALSE);
+
+   _mesa_BindSampler(ctx->Texture.CurrentUnit, samplerSave);
 
    _mesa_meta_end(ctx);
 

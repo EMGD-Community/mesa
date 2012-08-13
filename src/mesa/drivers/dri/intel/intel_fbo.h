@@ -129,12 +129,11 @@ intel_rb_format(const struct intel_renderbuffer *rb)
    return rb->Base.Base.Format;
 }
 
-
-bool
-intel_framebuffer_has_hiz(struct gl_framebuffer *fb);
-
 extern struct intel_renderbuffer *
-intel_create_renderbuffer(gl_format format);
+intel_create_renderbuffer(gl_format format, unsigned num_samples);
+
+struct intel_renderbuffer *
+intel_create_private_renderbuffer(gl_format format, unsigned num_samples);
 
 struct gl_renderbuffer*
 intel_create_wrapped_renderbuffer(struct gl_context * ctx,
@@ -171,6 +170,9 @@ struct intel_region*
 intel_get_rb_region(struct gl_framebuffer *fb, GLuint attIndex);
 
 void
+intel_renderbuffer_set_needs_downsample(struct intel_renderbuffer *irb);
+
+void
 intel_renderbuffer_set_needs_hiz_resolve(struct intel_renderbuffer *irb);
 
 void
@@ -200,6 +202,9 @@ intel_renderbuffer_resolve_hiz(struct intel_context *intel,
 bool
 intel_renderbuffer_resolve_depth(struct intel_context *intel,
 				 struct intel_renderbuffer *irb);
+
+unsigned
+intel_quantize_num_samples(struct intel_screen *intel, unsigned num_samples);
 
 #ifdef __cplusplus
 }

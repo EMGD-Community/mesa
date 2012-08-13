@@ -65,7 +65,6 @@ struct brw_wm_prog_key {
    GLuint flat_shade:1;
    GLuint nr_color_regions:5;
    GLuint render_to_fbo:1;
-   GLuint alpha_test:1;
    GLuint clamp_fragment_color:1;
    GLuint line_aa:2;
 
@@ -346,7 +345,8 @@ void emit_ddxy(struct brw_compile *p,
 	       const struct brw_reg *dst,
 	       GLuint mask,
 	       bool is_ddx,
-	       const struct brw_reg *arg0);
+	       const struct brw_reg *arg0,
+	       bool negate_value);
 void emit_delta_xy(struct brw_compile *p,
 		   const struct brw_reg *dst,
 		   GLuint mask,

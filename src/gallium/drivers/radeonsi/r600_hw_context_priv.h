@@ -35,28 +35,9 @@
 #define PKT_COUNT_C                     0xC000FFFF
 #define PKT_COUNT_S(x)                  (((x) & 0x3FFF) << 16)
 
-/* these flags are used in register flags and added into block flags */
-#define REG_FLAG_NEED_BO 1
-#define REG_FLAG_DIRTY_ALWAYS 2
-#define REG_FLAG_RV6XX_SBU 4
-#define REG_FLAG_NOT_R600 8
-#define REG_FLAG_ENABLE_ALWAYS 16
-#define REG_FLAG_FLUSH_CHANGE 64
-
-struct r600_reg {
-	unsigned			offset;
-	unsigned			flags;
-};
-
 /*
  * r600_hw_context.c
  */
-struct r600_resource *r600_context_reg_bo(struct r600_context *ctx, unsigned offset);
-int r600_context_add_block(struct r600_context *ctx, const struct r600_reg *reg, unsigned nreg,
-			   unsigned opcode, unsigned offset_base);
-void r600_context_dirty_block(struct r600_context *ctx, struct r600_block *block,
-			      int dirty, int index);
-int r600_setup_block_table(struct r600_context *ctx);
 void r600_init_cs(struct r600_context *ctx);
 
 /*
@@ -66,7 +47,7 @@ void evergreen_flush_vgt_streamout(struct r600_context *ctx);
 void evergreen_set_streamout_enable(struct r600_context *ctx, unsigned buffer_enable_bit);
 
 
-static INLINE unsigned r600_context_bo_reloc(struct r600_context *ctx, struct r600_resource *rbo,
+static INLINE unsigned r600_context_bo_reloc(struct r600_context *ctx, struct si_resource *rbo,
 					     enum radeon_bo_usage usage)
 {
 	assert(usage);

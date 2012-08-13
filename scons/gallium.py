@@ -139,6 +139,9 @@ def generate(env):
 
     env['gcc'] = 'gcc' in os.path.basename(env['CC']).split('-')
     env['msvc'] = env['CC'] == 'cl'
+    env['suncc'] = env['platform'] == 'sunos' and os.path.basename(env['CC']) == 'cc'
+    env['clang'] = env['CC'] == 'clang'
+    env['icc'] = 'icc' == os.path.basename(env['CC'])
 
     if env['msvc'] and env['toolchain'] == 'default' and env['machine'] == 'x86_64':
         # MSVC x64 support is broken in earlier versions of scons
@@ -151,6 +154,8 @@ def generate(env):
     ppc = env['machine'] == 'ppc'
     gcc = env['gcc']
     msvc = env['msvc']
+    suncc = env['suncc']
+    icc = env['icc']
 
     # Determine whether we are cross compiling; in particular, whether we need
     # to compile code generators with a different compiler as the target code.
@@ -327,7 +332,8 @@ def generate(env):
                 #'-march=pentium4',
             ]
             if distutils.version.LooseVersion(ccversion) >= distutils.version.LooseVersion('4.2') \
-               and (platform != 'windows' or env['build'] == 'debug' or True):
+               and (platform != 'windows' or env['build'] == 'debug' or True) \
+               and platform != 'haiku':
                 # NOTE: We need to ensure stack is realigned given that we
                 # produce shared objects, and have no control over the stack
                 # alignment policy of the application. Therefore we need
@@ -346,6 +352,14 @@ def generate(env):
             if platform in ['windows', 'darwin']:
                 # Workaround http://gcc.gnu.org/bugzilla/show_bug.cgi?id=37216
                 ccflags += ['-fno-common']
+            if platform in ['haiku']:
+                # Make optimizations compatible with Pentium or higher on Haiku
+                ccflags += [
+                    '-mstackrealign', # ensure stack is aligned
+                    '-march=i586', # Haiku target is Pentium
+                    '-mtune=i686', # use i686 where we can
+                    '-mmmx' # use mmx math where we can
+                ]
         if env['machine'] == 'x86_64':
             ccflags += ['-m64']
             if platform == 'darwin':
@@ -357,7 +371,6 @@ def generate(env):
         ccflags += [
             '-Wall',
             '-Wno-long-long',
-            '-ffast-math',
             '-fmessage-length=0', # be nice to Eclipse
         ]
         cflags += [
@@ -371,6 +384,10 @@ def generate(env):
             cflags += [
                 '-Wdeclaration-after-statement',
             ]
+    if icc:
+        cflags += [
+            '-std=gnu99',
+        ]
     if msvc:
         # See also:
         # - http://msdn.microsoft.com/en-us/library/19z1t1wy.aspx
@@ -394,7 +411,6 @@ def generate(env):
                 '/GL-', # disable whole program optimization
             ]
         ccflags += [
-            '/fp:fast', # fast floating point 
             '/W3', # warning level
             #'/Wp64', # enable 64 bit porting warnings
             '/wd4996', # disable deprecated POSIX name warnings
@@ -473,7 +489,7 @@ def generate(env):
     env.Append(SHLINKFLAGS = shlinkflags)
 
     # We have C++ in several libraries, so always link with the C++ compiler
-    if env['gcc']:
+    if env['gcc'] or env['clang']:
         env['LINK'] = env['CXX']
 
     # Default libs
@@ -505,7 +521,7 @@ def generate(env):
     createInstallMethods(env)
 
     env.PkgCheckModules('X11', ['x11', 'xext', 'xdamage', 'xfixes'])
-    env.PkgCheckModules('XCB', ['x11-xcb', 'xcb-glx'])
+    env.PkgCheckModules('XCB', ['x11-xcb', 'xcb-glx >= 1.8.1'])
     env.PkgCheckModules('XF86VIDMODE', ['xxf86vm'])
     env.PkgCheckModules('DRM', ['libdrm >= 2.4.24'])
     env.PkgCheckModules('DRM_INTEL', ['libdrm_intel >= 2.4.30'])

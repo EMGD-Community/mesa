@@ -50,9 +50,8 @@ extern "C" {
 #endif
 
 
-/** Opaque type */
+/** Opaque types */
 struct winsys_handle;
-/** Opaque type */
 struct pipe_fence_handle;
 struct pipe_resource;
 struct pipe_surface;
@@ -66,7 +65,6 @@ struct pipe_transfer;
  */
 struct pipe_screen {
    void (*destroy)( struct pipe_screen * );
-
 
    const char *(*get_name)( struct pipe_screen * );
 
@@ -109,6 +107,13 @@ struct pipe_screen {
    int (*get_compute_param)(struct pipe_screen *,
 			    enum pipe_compute_cap param,
 			    void *ret);
+
+   /**
+    * Query a timestamp in nanoseconds. The returned value should match
+    * PIPE_QUERY_TIMESTAMP. This function returns immediately and doesn't
+    * wait for rendering to complete (which cannot be achieved with queries).
+    */
+   uint64_t (*get_timestamp)(struct pipe_screen *);
 
    struct pipe_context * (*context_create)( struct pipe_screen *,
 					    void *priv );

@@ -220,95 +220,6 @@ void evergreen_emit_ctx_reloc(
 	ctx->cs->buf[ctx->cs->cdw++] = rr;
 }
 
-void evergreen_set_buffer_sync(
-	struct r600_context *ctx,
-	struct r600_resource* bo,
-	int size,
-	int flags,
-	enum radeon_bo_usage usage)
-{
-	assert(bo);
-	int32_t cp_coher_size = 0;
-
-	if (size == 0xffffffff || size == 0) {
-		cp_coher_size = 0xffffffff;
-	}
-	else {
-		cp_coher_size = ((size + 255) >> 8);
-	}
-
-	uint32_t sync_flags = 0;
-
-	if ((flags & COMPUTE_RES_TC_FLUSH) == COMPUTE_RES_TC_FLUSH) {
-		sync_flags |= S_0085F0_TC_ACTION_ENA(1);
-	}
-
-	if ((flags & COMPUTE_RES_VC_FLUSH) == COMPUTE_RES_VC_FLUSH) {
-		sync_flags |= S_0085F0_VC_ACTION_ENA(1);
-	}
-
-	if ((flags & COMPUTE_RES_SH_FLUSH) == COMPUTE_RES_SH_FLUSH) {
-		sync_flags |= S_0085F0_SH_ACTION_ENA(1);
-	}
-
-	if ((flags & COMPUTE_RES_CB_FLUSH(0)) == COMPUTE_RES_CB_FLUSH(0)) {
-		sync_flags |= S_0085F0_CB_ACTION_ENA(1);
-
-		switch((flags >> 8) & 0xF) {
-		case 0:
-			sync_flags |= S_0085F0_CB0_DEST_BASE_ENA(1);
-			break;
-		case 1:
-			sync_flags |= S_0085F0_CB1_DEST_BASE_ENA(1);
-			break;
-		case 2:
-			sync_flags |= S_0085F0_CB2_DEST_BASE_ENA(1);
-			break;
-		case 3:
-			sync_flags |= S_0085F0_CB3_DEST_BASE_ENA(1);
-			break;
-		case 4:
-			sync_flags |= S_0085F0_CB4_DEST_BASE_ENA(1);
-			break;
-		case 5:
-			sync_flags |= S_0085F0_CB5_DEST_BASE_ENA(1);
-			break;
-		case 6:
-			sync_flags |= S_0085F0_CB6_DEST_BASE_ENA(1);
-			break;
-		case 7:
-			sync_flags |= S_0085F0_CB7_DEST_BASE_ENA(1);
-			break;
-		case 8:
-			sync_flags |= S_0085F0_CB8_DEST_BASE_ENA(1);
-			break;
-		case 9:
-			sync_flags |= S_0085F0_CB9_DEST_BASE_ENA(1);
-			break;
-		case 10:
-			sync_flags |= S_0085F0_CB10_DEST_BASE_ENA(1);
-			break;
-		case 11:
-			sync_flags |= S_0085F0_CB11_DEST_BASE_ENA(1);
-			break;
-		default:
-			assert(0);
-		}
-	}
-
-	int32_t poll_interval = 10;
-
-	ctx->cs->buf[ctx->cs->cdw++] = PKT3(PKT3_SURFACE_SYNC, 3, 0);
-	ctx->cs->buf[ctx->cs->cdw++] = sync_flags;
-	ctx->cs->buf[ctx->cs->cdw++] = cp_coher_size;
-	ctx->cs->buf[ctx->cs->cdw++] = 0;
-	ctx->cs->buf[ctx->cs->cdw++] = poll_interval;
-
-	if (cp_coher_size != 0xffffffff) {
-		evergreen_emit_ctx_reloc(ctx, bo, usage);
-	}
-}
-
 int evergreen_compute_get_gpu_format(
 	struct number_type_and_format* fmt,
 	struct r600_resource *bo)
@@ -317,6 +228,7 @@ int evergreen_compute_get_gpu_format(
 	{
 		case PIPE_FORMAT_R8_UNORM:
 		case PIPE_FORMAT_R32_UNORM:
+		case PIPE_FORMAT_R32_UINT:
 			fmt->format = V_028C70_COLOR_32;
 			fmt->number_type = V_028C70_NUMBER_UNORM;
 			fmt->num_format_all = 0;
@@ -352,100 +264,61 @@ void evergreen_set_rat(
 	assert((size & 3) == 0);
 	assert((start & 0xFF) == 0);
 
-	int offset;
+	struct r600_pipe_state * state = CALLOC_STRUCT(r600_pipe_state);
+	struct pipe_surface rat_templ;
+	struct r600_surface *surf;
+	struct r600_resource *res;
+	struct r600_context *rctx = pipe->ctx;
+
 	COMPUTE_DBG("bind rat: %i \n", id);
 
-	if (id < 8) {
-		offset = id*0x3c;
-	}
-	else {
-		offset = 8*0x3c + (id-8)*0x1c;
-	}
+	/* Create the RAT surface */
+	memset(&rat_templ, 0, sizeof(rat_templ));
+	rat_templ.usage = RADEON_USAGE_READWRITE;
+	rat_templ.format = PIPE_FORMAT_R32_UINT;
+	rat_templ.u.tex.level = 0;
+	rat_templ.u.tex.first_layer = 0;
+	rat_templ.u.tex.last_layer = 0;
 
-	int linear = 0;
+	/* Add the RAT the list of color buffers */
+	pipe->ctx->framebuffer.cbufs[id] = pipe->ctx->context.create_surface(
+		(struct pipe_context *)pipe->ctx,
+		(struct pipe_resource *)bo, &rat_templ);
 
-	if (bo->b.b.height0 <= 1 && bo->b.b.depth0 <= 1
-			&& bo->b.b.target == PIPE_BUFFER) {
-		linear = 1;
-	}
+	/* Update the number of color buffers */
+	pipe->ctx->nr_cbufs = MAX2(id + 1, pipe->ctx->nr_cbufs);
 
-	struct evergreen_compute_resource* res =
-		get_empty_res(pipe, COMPUTE_RESOURCE_RAT, id);
+	/* Update the cb_target_mask
+	 * XXX: I think this is a potential spot for bugs once we start doing
+	 * GL interop.  cb_target_mask may be modified in the 3D sections
+	 * of this driver. */
+	pipe->ctx->compute_cb_target_mask |= (0xf << (id * 4));
 
-	evergreen_emit_force_reloc(res);
+	surf = (struct r600_surface*)pipe->ctx->framebuffer.cbufs[id];
+	res = (struct r600_resource*)surf->base.texture;
 
-	evergreen_reg_set(res, R_028C64_CB_COLOR0_PITCH, 0); ///TODO: for 2D?
-	evergreen_reg_set(res, R_028C68_CB_COLOR0_SLICE, 0);
+	evergreen_init_color_surface(rctx, surf);
 
-	struct number_type_and_format fmt;
+	/* Get the CB register writes for the RAT */
+	r600_pipe_state_add_reg_bo(state, R_028C60_CB_COLOR0_BASE + id * 0x3C,
+				   surf->cb_color_base, res, RADEON_USAGE_READWRITE);
+	r600_pipe_state_add_reg(state, R_028C78_CB_COLOR0_DIM + id * 0x3C,
+				surf->cb_color_dim);
+	r600_pipe_state_add_reg_bo(state, R_028C70_CB_COLOR0_INFO + id * 0x3C,
+				   surf->cb_color_info, res, RADEON_USAGE_READWRITE);
+	r600_pipe_state_add_reg(state, R_028C64_CB_COLOR0_PITCH + id * 0x3C,
+				surf->cb_color_pitch);
+	r600_pipe_state_add_reg(state, R_028C68_CB_COLOR0_SLICE + id * 0x3C,
+				surf->cb_color_slice);
+	r600_pipe_state_add_reg(state, R_028C6C_CB_COLOR0_VIEW + id * 0x3C,
+				surf->cb_color_view);
+	r600_pipe_state_add_reg_bo(state, R_028C74_CB_COLOR0_ATTRIB + id * 0x3C,
+				   surf->cb_color_attrib, res, RADEON_USAGE_READWRITE);
 
-	///default config
-	if (bo->b.b.format == PIPE_FORMAT_NONE) {
-		 fmt.format = V_028C70_COLOR_32;
-		 fmt.number_type = V_028C70_NUMBER_FLOAT;
-	} else {
-		evergreen_compute_get_gpu_format(&fmt, bo);
-	}
-
-	if (linear) {
-		evergreen_reg_set(res,
-			R_028C70_CB_COLOR0_INFO, S_028C70_RAT(1)
-			| S_028C70_ARRAY_MODE(V_028C70_ARRAY_LINEAR_ALIGNED)
-			| S_028C70_FORMAT(fmt.format)
-			| S_028C70_NUMBER_TYPE(fmt.number_type)
-		);
-		evergreen_emit_force_reloc(res);
-	} else {
-		assert(0 && "TODO");
-		///TODO
-//	 evergreen_reg_set(res, R_028C70_CB_COLOR0_INFO, S_028C70_RAT(1) | S_028C70_ARRAY_MODE(????));
-//	 evergreen_emit_force_reloc(res);
-	}
-
-	evergreen_reg_set(res, R_028C74_CB_COLOR0_ATTRIB, S_028C74_NON_DISP_TILING_ORDER(1));
-	evergreen_emit_force_reloc(res);
-
-	if (linear) {
-		/* XXX: Why are we using size instead of bo->b.b.b.width0 ? */
-		evergreen_reg_set(res, R_028C78_CB_COLOR0_DIM, size);
-	} else {
-		evergreen_reg_set(res, R_028C78_CB_COLOR0_DIM,
-			S_028C78_WIDTH_MAX(bo->b.b.width0)
-			| S_028C78_HEIGHT_MAX(bo->b.b.height0));
-	}
-
-	if (id < 8) {
-		evergreen_reg_set(res, R_028C7C_CB_COLOR0_CMASK, 0);
-		evergreen_emit_force_reloc(res);
-		evergreen_reg_set(res, R_028C84_CB_COLOR0_FMASK, 0);
-		evergreen_emit_force_reloc(res);
-	}
-
-	evergreen_reg_set(res, R_028C60_CB_COLOR0_BASE + offset, start >> 8);
-
-	res->bo = bo;
-	res->usage = RADEON_USAGE_READWRITE;
-	res->coher_bo_size = size;
-	res->flags = COMPUTE_RES_CB_FLUSH(id);
-}
-
-void evergreen_set_lds(
-	struct r600_pipe_compute *pipe,
-	int num_lds,
-	int size,
-	int num_waves)
-{
-	struct evergreen_compute_resource* res =
-		get_empty_res(pipe, COMPUTE_RESOURCE_LDS, 0);
-
-	if (pipe->ctx->chip_class < CAYMAN) {
-		evergreen_reg_set(res, R_008E2C_SQ_LDS_RESOURCE_MGMT,
-			S_008E2C_NUM_LS_LDS(num_lds));
-	} else {
-		evergreen_reg_set(res, CM_R_0286FC_SPI_LDS_MGMT,
-					S_0286FC_NUM_LS_LDS(num_lds));
-	}
-	evergreen_reg_set(res, CM_R_0288E8_SQ_LDS_ALLOC, size | num_waves << 14);
+	/* Add the register blocks to the dirty list */
+        free(pipe->ctx->states[R600_PIPE_STATE_FRAMEBUFFER]);
+        pipe->ctx->states[R600_PIPE_STATE_FRAMEBUFFER] = state;
+        r600_context_pipe_state_set(pipe->ctx, state);
 }
 
 void evergreen_set_gds(
@@ -617,81 +490,6 @@ static unsigned r600_tex_dim(unsigned dim)
 	}
 }
 
-void evergreen_set_vtx_resource(
-	struct r600_pipe_compute *pipe,
-	struct r600_resource* bo,
-	int id, uint64_t offset, int writable)
-{
-	assert(id < 16);
-	uint32_t sq_vtx_constant_word2, sq_vtx_constant_word3, sq_vtx_constant_word4;
-	struct number_type_and_format fmt;
-	uint64_t va;
-
-	fmt.format = 0;
-
-	assert(bo->b.b.height0 <= 1);
-	assert(bo->b.b.depth0 <= 1);
-
-	int e = evergreen_compute_get_gpu_format(&fmt, bo);
-
-	assert(e && "unknown format");
-
-	struct evergreen_compute_resource* res =
-		get_empty_res(pipe, COMPUTE_RESOURCE_VERT, id);
-
-	unsigned size = bo->b.b.width0;
-	unsigned stride = 1;
-
-//	size = (size * util_format_get_blockwidth(bo->b.b.b.format) *
-//		util_format_get_blocksize(bo->b.b.b.format));
-
-	va = r600_resource_va(&pipe->ctx->screen->screen, &bo->b.b) + offset;
-
-	COMPUTE_DBG("id: %i vtx size: %i byte,	width0: %i elem\n",
-		id, size, bo->b.b.width0);
-
-	sq_vtx_constant_word2 =
-		S_030008_BASE_ADDRESS_HI(va >> 32) |
-		S_030008_STRIDE(stride) |
-		S_030008_DATA_FORMAT(fmt.format) |
-		S_030008_NUM_FORMAT_ALL(fmt.num_format_all) |
-		S_030008_ENDIAN_SWAP(0);
-
-	COMPUTE_DBG("%08X %i %i %i %i\n", sq_vtx_constant_word2, offset,
-			stride, fmt.format, fmt.num_format_all);
-
-	sq_vtx_constant_word3 =
-		S_03000C_DST_SEL_X(0) |
-		S_03000C_DST_SEL_Y(1) |
-		S_03000C_DST_SEL_Z(2) |
-		S_03000C_DST_SEL_W(3);
-
-	sq_vtx_constant_word4 = 0;
-
-	evergreen_emit_raw_value(res, PKT3C(PKT3_SET_RESOURCE, 8, 0));
-	evergreen_emit_raw_value(res, (id+816)*32 >> 2);
-	evergreen_emit_raw_value(res, (unsigned)((va) & 0xffffffff));
-	evergreen_emit_raw_value(res, size - 1);
-	evergreen_emit_raw_value(res, sq_vtx_constant_word2);
-	evergreen_emit_raw_value(res, sq_vtx_constant_word3);
-	evergreen_emit_raw_value(res, sq_vtx_constant_word4);
-	evergreen_emit_raw_value(res, 0);
-	evergreen_emit_raw_value(res, 0);
-	evergreen_emit_raw_value(res, S_03001C_TYPE(V_03001C_SQ_TEX_VTX_VALID_BUFFER));
-
-	res->bo = bo;
-
-	if (writable) {
-		res->usage = RADEON_USAGE_READWRITE;
-	}
-	else {
-		res->usage = RADEON_USAGE_READ;
-	}
-
-	res->coher_bo_size = size;
-	res->flags = COMPUTE_RES_TC_FLUSH | COMPUTE_RES_VC_FLUSH;
-}
-
 void evergreen_set_tex_resource(
 	struct r600_pipe_compute *pipe,
 	struct r600_pipe_sampler_view* view,
@@ -724,7 +522,7 @@ void evergreen_set_tex_resource(
 	height = view->base.texture->height0;
 	depth = view->base.texture->depth0;
 
-	pitch = align(tmp->pitch_in_blocks[0] *
+	pitch = align(tmp->surface.level[0].nblk_x *
 		util_format_get_blockwidth(tmp->real_format), 8);
 	array_mode = tmp->array_mode[0];
 	tile_type = tmp->tile_type;
@@ -761,7 +559,8 @@ void evergreen_set_tex_resource(
 	res->usage = RADEON_USAGE_READ;
 
 	res->coher_bo_size = tmp->offset[0] + util_format_get_blockwidth(tmp->real_format)*view->base.texture->width0*height*depth;
-	res->flags = COMPUTE_RES_TC_FLUSH;
+
+	r600_inval_texture_cache(pipe->ctx);
 
 	evergreen_emit_force_reloc(res);
 	evergreen_emit_force_reloc(res);
@@ -819,7 +618,8 @@ void evergreen_set_const_cache(
 	res->bo = cbo;
 	res->usage = RADEON_USAGE_READ;
 	res->coher_bo_size = size;
-	res->flags = COMPUTE_RES_SH_FLUSH;
+
+	r600_inval_shader_cache(pipe->ctx);
 }
 
 struct r600_resource* r600_compute_buffer_alloc_vram(

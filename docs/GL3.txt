@@ -42,15 +42,15 @@ GLX_ARB_create_context (GLX 1.4 is required)          DONE
 
 GL 3.1:
 
-GLSL 1.40                                             missing: UBOS, inverse(),
-                                                      highp change
+GLSL 1.40                                             needs UBOs (in progress)
+Forward compatibile context support/deprecations      not started
 Instanced drawing (GL_ARB_draw_instanced)             DONE (i965, gallium, swrast)
 Buffer copying (GL_ARB_copy_buffer)                   DONE (i965, r300, r600, swrast)
 Primitive restart (GL_NV_primitive_restart)           DONE (i965, r600)
 16 vertex texture image units                         DONE
 Texture buffer objs (GL_ARB_texture_buffer_object)    needs GL3.1 enabling (i965)
 Rectangular textures (GL_ARB_texture_rectangle)       DONE (i965, r300, r600, swrast)
-Uniform buffer objs (GL_ARB_uniform_buffer_object)    not started
+Uniform buffer objs (GL_ARB_uniform_buffer_object)    DONE (i965)
 Signed normalized textures (GL_EXT_texture_snorm)     DONE (i965, r300, r600)
 
 
@@ -72,15 +72,16 @@ GLX_ARB_create_context_profile                        DONE
 
 GL 3.3:
 
-GLSL 3.30                                             not started
+GLSL 3.30                                             new features in this version pretty much done
 GL_ARB_blend_func_extended                            DONE (i965, r600, softpipe)
 GL_ARB_explicit_attrib_location                       DONE (i915, i965, r300, r600, swrast)
 GL_ARB_occlusion_query2                               DONE (r300, r600, swrast)
 GL_ARB_sampler_objects                                DONE (i965, r300, r600)
+GL_ARB_shader_bit_encoding                            DONE
 GL_ARB_texture_rgb10_a2ui                             DONE (r600)
 GL_ARB_texture_swizzle                                DONE (same as EXT version) (i965, r300, r600, swrast)
-GL_ARB_timer_query                                    ~60% done (the EXT variant)
-GL_ARB_instanced_arrays                               DONE (r300, r600)
+GL_ARB_timer_query                                    DONE
+GL_ARB_instanced_arrays                               DONE (i965, r300, r600)
 GL_ARB_vertex_type_2_10_10_10_rev                     DONE (r600)
 
 
@@ -90,6 +91,7 @@ GLSL 4.0                                             not started
 GL_ARB_texture_query_lod                             not started
 GL_ARB_draw_buffers_blend                            DONE (i965, r600, softpipe)
 GL_ARB_draw_indirect                                 not started
+GL_ARB_gpu_shader5                                   not started
 GL_ARB_gpu_shader_fp64                               not started
 GL_ARB_sample_shading                                not started
 GL_ARB_shader_subroutine                             not started
@@ -98,7 +100,7 @@ GL_ARB_texture_buffer_object_rgb32                   not started
 GL_ARB_texture_cube_map_array                        not started
 GL_ARB_texture_gather                                not started
 GL_ARB_transform_feedback2                           DONE
-GL_ARB_transform_feedback3                           not started
+GL_ARB_transform_feedback3                           DONE
 
 
 GL 4.1:
@@ -113,18 +115,49 @@ GL_ARB_viewport_array                                not started
 
 
 GL 4.2:
+
 GLSL 4.2                                             not started
 GL_ARB_texture_compression_bptc                      not started
 GL_ARB_compressed_texture_pixel_storage              not started
 GL_ARB_shader_atomic_counters                        not started
 GL_ARB_texture_storage                               DONE (r300, r600, swrast)
-GL_ARB_transform_feedback_instanced                  not started
-GL_ARB_base_instance                                 not started
+GL_ARB_transform_feedback_instanced                  DONE
+GL_ARB_base_instance                                 DONE (nv50, nvc0, r600, radeonsi)
 GL_ARB_shader_image_load_store                       not started
 GL_ARB_conservative_depth                            DONE (softpipe)
 GL_ARB_shading_language_420pack                      not started
 GL_ARB_internalformat_query                          not started
 GL_ARB_map_buffer_alignment                          not started
+
+
+GL 4.3:
+
+GLSL 4.3                                             not started
+ARB_arrays_of_arrays                                 not started
+ARB_ES3_compatibility                                not started
+ARB_clear_buffer_object                              not started
+ARB_compute_shader                                   started (gallium)
+ARB_copy_image                                       not started
+ARB_debug_group                                      not started
+ARB_debug_label                                      not started
+ARB_debug_output                                     DONE
+ARB_debug_output2                                    not started
+ARB_explicit_uniform_location                        not started
+ARB_fragment_layer_viewport                          not started
+ARB_framebuffer_no_attachments                       not started
+ARB_internalformat_query2                            not started
+ARB_invalidate_subdata                               not started
+ARB_multi_draw_indirect                              not started
+ARB_program_interface_query                          not started
+ARB_robust_buffer_access_behavior                    not started
+ARB_shader_image_size                                not started
+ARB_shader_storage_buffer_object                     not started
+ARB_stencil_texturing                                not started
+ARB_texture_buffer_range                             not started
+ARB_texture_query_levels                             not started
+ARB_texture_storage_multisample                      not started
+ARB_texture_view                                     not started
+ARB_vertex_attrib_binding                            not started
 
 
 More info about these features and the work involved can be found at

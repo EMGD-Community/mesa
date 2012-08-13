@@ -28,10 +28,20 @@
 #include "nv50_screen.h"
 
 #include "nouveau/nv_object.xml.h"
+#include <errno.h>
 
 #ifndef NOUVEAU_GETPARAM_GRAPH_UNITS
 # define NOUVEAU_GETPARAM_GRAPH_UNITS 13
 #endif
+
+/* affected by LOCAL_WARPS_LOG_ALLOC / LOCAL_WARPS_NO_CLAMP */
+#define LOCAL_WARPS_ALLOC 32
+/* affected by STACK_WARPS_LOG_ALLOC / STACK_WARPS_NO_CLAMP */
+#define STACK_WARPS_ALLOC 32
+
+#define THREADS_IN_WARP 32
+
+#define ONE_TEMP_SIZE (4/*vector*/ * sizeof(float))
 
 static boolean
 nv50_screen_is_format_supported(struct pipe_screen *pscreen,
@@ -118,6 +128,7 @@ nv50_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_VERTEX_COLOR_UNCLAMPED:
    case PIPE_CAP_VERTEX_COLOR_CLAMPED:
       return 1;
+   case PIPE_CAP_QUERY_TIMESTAMP:
    case PIPE_CAP_TIMER_QUERY:
    case PIPE_CAP_OCCLUSION_QUERY:
       return 1;
@@ -148,6 +159,7 @@ nv50_screen_get_param(struct pipe_screen *pscreen, enum pipe_cap param)
    case PIPE_CAP_CONDITIONAL_RENDER:
    case PIPE_CAP_TEXTURE_BARRIER:
    case PIPE_CAP_QUADS_FOLLOW_PROVOKING_VERTEX_CONVENTION:
+   case PIPE_CAP_START_INSTANCE:
       return 1;
    case PIPE_CAP_TGSI_CAN_COMPACT_VARYINGS:
    case PIPE_CAP_TGSI_CAN_COMPACT_CONSTANTS:
@@ -208,7 +220,7 @@ nv50_screen_get_shader_param(struct pipe_screen *pscreen, unsigned shader,
    case PIPE_SHADER_CAP_MAX_PREDS:
       return 0;
    case PIPE_SHADER_CAP_MAX_TEMPS:
-      return NV50_CAP_MAX_PROGRAM_TEMPS;
+      return nv50_screen(pscreen)->max_tls_space / ONE_TEMP_SIZE;
    case PIPE_SHADER_CAP_TGSI_CONT_SUPPORTED:
       return 1;
    case PIPE_SHADER_CAP_SUBROUTINES:
@@ -309,8 +321,8 @@ nv50_screen_fence_update(struct pipe_screen *pscreen)
    return nv50_screen(pscreen)->fence.map[0];
 }
 
-static int
-nv50_screen_init_hwctx(struct nv50_screen *screen, unsigned tls_space)
+static void
+nv50_screen_init_hwctx(struct nv50_screen *screen)
 {
    struct nouveau_pushbuf *push = screen->base.pushbuf;
    struct nv04_fifo *fifo;
@@ -410,7 +422,7 @@ nv50_screen_init_hwctx(struct nv50_screen *screen, unsigned tls_space)
    BEGIN_NV04(push, NV50_3D(LOCAL_ADDRESS_HIGH), 3);
    PUSH_DATAh(push, screen->tls_bo->offset);
    PUSH_DATA (push, screen->tls_bo->offset);
-   PUSH_DATA (push, util_logbase2(tls_space / 8));
+   PUSH_DATA (push, util_logbase2(screen->cur_tls_space / 8));
 
    BEGIN_NV04(push, NV50_3D(STACK_ADDRESS_HIGH), 3);
    PUSH_DATAh(push, screen->stack_bo->offset);
@@ -505,16 +517,61 @@ nv50_screen_init_hwctx(struct nv50_screen *screen, unsigned tls_space)
    PUSH_DATA (push, 1);
 
    PUSH_KICK (push);
+}
+
+static int nv50_tls_alloc(struct nv50_screen *screen, unsigned tls_space,
+      uint64_t *tls_size)
+{
+   struct nouveau_device *dev = screen->base.device;
+   int ret;
+
+   screen->cur_tls_space = util_next_power_of_two(tls_space / ONE_TEMP_SIZE) *
+         ONE_TEMP_SIZE;
+   if (nouveau_mesa_debug)
+      debug_printf("allocating space for %u temps\n",
+            util_next_power_of_two(tls_space / ONE_TEMP_SIZE));
+   *tls_size = screen->cur_tls_space * util_next_power_of_two(screen->TPs) *
+         screen->MPsInTP * LOCAL_WARPS_ALLOC * THREADS_IN_WARP;
+
+   ret = nouveau_bo_new(dev, NOUVEAU_BO_VRAM, 1 << 16,
+                        *tls_size, NULL, &screen->tls_bo);
+   if (ret) {
+      NOUVEAU_ERR("Failed to allocate local bo: %d\n", ret);
+      return ret;
+   }
 
    return 0;
 }
 
-#define FAIL_SCREEN_INIT(str, err)                    \
-   do {                                               \
-      NOUVEAU_ERR(str, err);                          \
-      nv50_screen_destroy(pscreen);                   \
-      return NULL;                                    \
-   } while(0)
+int nv50_tls_realloc(struct nv50_screen *screen, unsigned tls_space)
+{
+   struct nouveau_pushbuf *push = screen->base.pushbuf;
+   int ret;
+   uint64_t tls_size;
+
+   if (tls_space < screen->cur_tls_space)
+      return 0;
+   if (tls_space > screen->max_tls_space) {
+      /* fixable by limiting number of warps (LOCAL_WARPS_LOG_ALLOC /
+       * LOCAL_WARPS_NO_CLAMP) */
+      NOUVEAU_ERR("Unsupported number of temporaries (%u > %u). Fixable if someone cares.\n",
+            (unsigned)(tls_space / ONE_TEMP_SIZE),
+            (unsigned)(screen->max_tls_space / ONE_TEMP_SIZE));
+      return -ENOMEM;
+   }
+
+   nouveau_bo_ref(NULL, &screen->tls_bo);
+   ret = nv50_tls_alloc(screen, tls_space, &tls_size);
+   if (ret)
+      return ret;
+
+   BEGIN_NV04(push, NV50_3D(LOCAL_ADDRESS_HIGH), 3);
+   PUSH_DATAh(push, screen->tls_bo->offset);
+   PUSH_DATA (push, screen->tls_bo->offset);
+   PUSH_DATA (push, util_logbase2(screen->cur_tls_space / 8));
+
+   return 1;
+}
 
 struct pipe_screen *
 nv50_screen_create(struct nouveau_device *dev)
@@ -524,7 +581,7 @@ nv50_screen_create(struct nouveau_device *dev)
    struct nouveau_object *chan;
    uint64_t value;
    uint32_t tesla_class;
-   unsigned stack_size, max_warps, tls_space;
+   unsigned stack_size;
    int ret;
 
    screen = CALLOC_STRUCT(nv50_screen);
@@ -533,8 +590,10 @@ nv50_screen_create(struct nouveau_device *dev)
    pscreen = &screen->base.base;
 
    ret = nouveau_screen_init(&screen->base, dev);
-   if (ret)
-      FAIL_SCREEN_INIT("nouveau_screen_init failed: %d\n", ret);
+   if (ret) {
+      NOUVEAU_ERR("nouveau_screen_init failed: %d\n", ret);
+      goto fail;
+   }
 
    /* TODO: Prevent FIFO prefetch before transfer of index buffers and
     *  admit them to VRAM.
@@ -562,8 +621,11 @@ nv50_screen_create(struct nouveau_device *dev)
 
    ret = nouveau_bo_new(dev, NOUVEAU_BO_GART | NOUVEAU_BO_MAP, 0, 4096,
                         NULL, &screen->fence.bo);
-   if (ret)
+   if (ret) {
+      NOUVEAU_ERR("Failed to allocate fence bo: %d\n", ret);
       goto fail;
+   }
+
    nouveau_bo_map(screen->fence.bo, 0, NULL);
    screen->fence.map = screen->fence.bo->map;
    screen->base.fence.emit = nv50_screen_fence_emit;
@@ -572,20 +634,24 @@ nv50_screen_create(struct nouveau_device *dev)
    ret = nouveau_object_new(chan, 0xbeef0301, NOUVEAU_NOTIFIER_CLASS,
                             &(struct nv04_notify){ .length = 32 },
                             sizeof(struct nv04_notify), &screen->sync);
-   if (ret)
-      FAIL_SCREEN_INIT("Error allocating notifier: %d\n", ret);
-
+   if (ret) {
+      NOUVEAU_ERR("Failed to allocate notifier: %d\n", ret);
+      goto fail;
+   }
 
    ret = nouveau_object_new(chan, 0xbeef5039, NV50_M2MF_CLASS,
                             NULL, 0, &screen->m2mf);
-   if (ret)
-      FAIL_SCREEN_INIT("Error allocating PGRAPH context for M2MF: %d\n", ret);
-
+   if (ret) {
+      NOUVEAU_ERR("Failed to allocate PGRAPH context for M2MF: %d\n", ret);
+      goto fail;
+   }
 
    ret = nouveau_object_new(chan, 0xbeef502d, NV50_2D_CLASS,
                             NULL, 0, &screen->eng2d);
-   if (ret)
-      FAIL_SCREEN_INIT("Error allocating PGRAPH context for 2D: %d\n", ret);
+   if (ret) {
+      NOUVEAU_ERR("Failed to allocate PGRAPH context for 2D: %d\n", ret);
+      goto fail;
+   }
 
    switch (dev->chipset & 0xf0) {
    case 0x50:
@@ -611,21 +677,24 @@ nv50_screen_create(struct nouveau_device *dev)
       }
       break;
    default:
-      FAIL_SCREEN_INIT("Not a known NV50 chipset: NV%02x\n", dev->chipset);
-      break;
+      NOUVEAU_ERR("Not a known NV50 chipset: NV%02x\n", dev->chipset);
+      goto fail;
    }
    screen->base.class_3d = tesla_class;
 
    ret = nouveau_object_new(chan, 0xbeef5097, tesla_class,
                             NULL, 0, &screen->tesla);
-   if (ret)
-      FAIL_SCREEN_INIT("Error allocating PGRAPH context for 3D: %d\n", ret);
-
+   if (ret) {
+      NOUVEAU_ERR("Failed to allocate PGRAPH context for 3D: %d\n", ret);
+      goto fail;
+   }
 
    ret = nouveau_bo_new(dev, NOUVEAU_BO_VRAM, 1 << 16,
                         3 << NV50_CODE_BO_SIZE_LOG2, NULL, &screen->code);
-   if (ret)
+   if (ret) {
+      NOUVEAU_ERR("Failed to allocate code bo: %d\n", ret);
       goto fail;
+   }
 
    nouveau_heap_init(&screen->vp_code_heap, 0, 1 << NV50_CODE_BO_SIZE_LOG2);
    nouveau_heap_init(&screen->gp_code_heap, 0, 1 << NV50_CODE_BO_SIZE_LOG2);
@@ -633,49 +702,59 @@ nv50_screen_create(struct nouveau_device *dev)
 
    nouveau_getparam(dev, NOUVEAU_GETPARAM_GRAPH_UNITS, &value);
 
-   max_warps  = util_bitcount(value & 0xffff);
-   max_warps *= util_bitcount((value >> 24) & 0xf) * 32;
+   screen->TPs = util_bitcount(value & 0xffff);
+   screen->MPsInTP = util_bitcount((value >> 24) & 0xf);
 
-   stack_size = max_warps * 64 * 8;
+   stack_size = util_next_power_of_two(screen->TPs) * screen->MPsInTP *
+         STACK_WARPS_ALLOC * 64 * 8;
 
    ret = nouveau_bo_new(dev, NOUVEAU_BO_VRAM, 1 << 16, stack_size, NULL,
                         &screen->stack_bo);
-   if (ret)
-      FAIL_SCREEN_INIT("Failed to allocate stack bo: %d\n", ret);
+   if (ret) {
+      NOUVEAU_ERR("Failed to allocate stack bo: %d\n", ret);
+      goto fail;
+   }
 
-   tls_space = NV50_CAP_MAX_PROGRAM_TEMPS * 16;
+   uint64_t size_of_one_temp = util_next_power_of_two(screen->TPs) *
+         screen->MPsInTP * LOCAL_WARPS_ALLOC *  THREADS_IN_WARP *
+         ONE_TEMP_SIZE;
+   screen->max_tls_space = dev->vram_size / size_of_one_temp * ONE_TEMP_SIZE;
+   screen->max_tls_space /= 2; /* half of vram */
 
-   screen->tls_size = tls_space * max_warps * 32;
+   /* hw can address max 64 KiB */
+   screen->max_tls_space = MIN2(screen->max_tls_space, 64 << 10);
 
-   if (nouveau_mesa_debug)
-      debug_printf("max_warps = %i, tls_size = %"PRIu64" KiB\n",
-                     max_warps, screen->tls_size >> 10);
-
-   ret = nouveau_bo_new(dev, NOUVEAU_BO_VRAM, 1 << 16, screen->tls_size, NULL,
-                        &screen->tls_bo);
-   if (ret)
-      FAIL_SCREEN_INIT("Failed to allocate stack bo: %d\n", ret);
-
-
-   ret = nouveau_bo_new(dev, NOUVEAU_BO_VRAM, 1 << 16, 4 << 16, NULL,
-                        &screen->uniforms);
+   uint64_t tls_size;
+   unsigned tls_space = 4/*temps*/ * ONE_TEMP_SIZE;
+   ret = nv50_tls_alloc(screen, tls_space, &tls_size);
    if (ret)
       goto fail;
 
+   if (nouveau_mesa_debug)
+      debug_printf("TPs = %u, MPsInTP = %u, VRAM = %"PRIu64" MiB, tls_size = %"PRIu64" KiB\n",
+            screen->TPs, screen->MPsInTP, dev->vram_size >> 20, tls_size >> 10);
+
+   ret = nouveau_bo_new(dev, NOUVEAU_BO_VRAM, 1 << 16, 4 << 16, NULL,
+                        &screen->uniforms);
+   if (ret) {
+      NOUVEAU_ERR("Failed to allocate uniforms bo: %d\n", ret);
+      goto fail;
+   }
+
    ret = nouveau_bo_new(dev, NOUVEAU_BO_VRAM, 1 << 16, 3 << 16, NULL,
                         &screen->txc);
-   if (ret)
-      FAIL_SCREEN_INIT("Could not allocate TIC/TSC bo: %d\n", ret);
+   if (ret) {
+      NOUVEAU_ERR("Failed to allocate TIC/TSC bo: %d\n", ret);
+      goto fail;
+   }
 
    screen->tic.entries = CALLOC(4096, sizeof(void *));
    screen->tsc.entries = screen->tic.entries + 2048;
 
-
    if (!nv50_blitctx_create(screen))
       goto fail;
 
-   if (nv50_screen_init_hwctx(screen, tls_space))
-      goto fail;
+   nv50_screen_init_hwctx(screen);
 
    nouveau_fence_new(&screen->base, &screen->base.fence.current, FALSE);
 

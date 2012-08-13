@@ -6,11 +6,29 @@
 // License. See LICENSE.TXT for details.
 //
 //==-----------------------------------------------------------------------===//
-// This file specifies where the base TD file exists
-// and where the version specific TD file exists.
-include "AMDILBase.td"
-include "AMDILVersion.td"
 
+// Include AMDIL TD files
+include "AMDILBase.td"
+
+
+def AMDGPUInstrInfo : InstrInfo {}
+
+//===----------------------------------------------------------------------===//
+// Declare the target which we are implementing
+//===----------------------------------------------------------------------===//
+def AMDGPUAsmWriter : AsmWriter {
+    string AsmWriterClassName = "InstPrinter";
+    int Variant = 0;
+    bit isMCAsmWriter = 1;
+}
+
+def AMDGPU : Target {
+  // Pull in Instruction Info:
+  let InstructionSet = AMDGPUInstrInfo;
+  let AssemblyWriters = [AMDGPUAsmWriter];
+}
+
+// Include AMDGPU TD files
 include "R600Schedule.td"
 include "SISchedule.td"
 include "Processors.td"

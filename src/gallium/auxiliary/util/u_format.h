@@ -591,6 +591,13 @@ boolean
 util_format_is_pure_uint(enum pipe_format format);
 
 /**
+ * Whether the format is a simple array format where all channels
+ * are of the same type and can be loaded from memory as a vector
+ */
+boolean
+util_format_is_array(const struct util_format_description *desc);
+
+/**
  * Check if the src format can be blitted to the destination format with
  * a simple memcpy.  For example, blitting from RGBA to RGBx is OK, but not
  * the reverse.
@@ -871,6 +878,35 @@ util_format_linear(enum pipe_format format)
       return PIPE_FORMAT_DXT5_RGBA;
    default:
       return format;
+   }
+}
+
+/**
+ * Given a depth-stencil format, return the corresponding stencil-only format.
+ * For stencil-only formats, return the format unchanged.
+ */
+static INLINE enum pipe_format
+util_format_stencil_only(enum pipe_format format)
+{
+   switch (format) {
+   /* mask out the depth component */
+   case PIPE_FORMAT_Z24_UNORM_S8_UINT:
+      return PIPE_FORMAT_X24S8_UINT;
+   case PIPE_FORMAT_S8_UINT_Z24_UNORM:
+      return PIPE_FORMAT_S8X24_UINT;
+   case PIPE_FORMAT_Z32_FLOAT_S8X24_UINT:
+      return PIPE_FORMAT_X32_S8X24_UINT;
+
+   /* stencil only formats */
+   case PIPE_FORMAT_X24S8_UINT:
+   case PIPE_FORMAT_S8X24_UINT:
+   case PIPE_FORMAT_X32_S8X24_UINT:
+   case PIPE_FORMAT_S8_UINT:
+      return format;
+
+   default:
+      assert(0);
+      return PIPE_FORMAT_NONE;
    }
 }
 

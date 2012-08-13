@@ -95,7 +95,7 @@ brw_upload_vs_pull_constants(struct brw_context *brw)
    drm_intel_gem_bo_unmap_gtt(brw->vs.const_bo);
 
    const int surf = SURF_INDEX_VERT_CONST_BUFFER;
-   intel->vtbl.create_constant_surface(brw, brw->vs.const_bo,
+   intel->vtbl.create_constant_surface(brw, brw->vs.const_bo, 0,
 				       params->NumParameters,
 				       &brw->vs.surf_offset[surf]);
 
@@ -109,6 +109,30 @@ const struct brw_tracked_state brw_vs_pull_constants = {
       .cache = CACHE_NEW_VS_PROG,
    },
    .emit = brw_upload_vs_pull_constants,
+};
+
+static void
+brw_upload_vs_ubo_surfaces(struct brw_context *brw)
+{
+   struct gl_context *ctx = &brw->intel.ctx;
+   /* _NEW_PROGRAM */
+   struct gl_shader_program *prog = ctx->Shader.CurrentVertexProgram;
+
+   if (!prog)
+      return;
+
+   brw_upload_ubo_surfaces(brw, prog->_LinkedShaders[MESA_SHADER_VERTEX],
+			   &brw->vs.surf_offset[SURF_INDEX_VS_UBO(0)]);
+}
+
+const struct brw_tracked_state brw_vs_ubo_surfaces = {
+   .dirty = {
+      .mesa = (_NEW_PROGRAM |
+	       _NEW_BUFFER_OBJECT),
+      .brw = BRW_NEW_BATCH,
+      .cache = 0,
+   },
+   .emit = brw_upload_vs_ubo_surfaces,
 };
 
 /**

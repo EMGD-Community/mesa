@@ -283,14 +283,6 @@ struct brw_shader_program {
    struct gl_shader_program base;
 };
 
-enum param_conversion {
-   PARAM_NO_CONVERT,
-   PARAM_CONVERT_F2I,
-   PARAM_CONVERT_F2U,
-   PARAM_CONVERT_F2B,
-   PARAM_CONVERT_ZERO,
-};
-
 /* Data about a particular attempt to compile a program.  Note that
  * there can be many of these, each in a different GL state
  * corresponding to a different brw_wm_prog_key struct, with different
@@ -323,9 +315,7 @@ struct brw_wm_prog_data {
     * _mesa_load_state_parameters has been called at runtime).
     */
    const float *param[MAX_UNIFORMS * 4]; /* should be: BRW_MAX_CURBE */
-   enum param_conversion param_convert[MAX_UNIFORMS * 4];
    const float *pull_param[MAX_UNIFORMS * 4];
-   enum param_conversion pull_param_convert[MAX_UNIFORMS * 4];
 };
 
 /**
@@ -503,6 +493,9 @@ struct brw_vs_ouput_sizes {
 /** Maximum number of actual buffers used for stream output */
 #define BRW_MAX_SOL_BUFFERS 4
 
+#define BRW_MAX_WM_UBOS              12
+#define BRW_MAX_VS_UBOS              12
+
 /**
  * Helpers to create Surface Binding Table indexes for draw buffers,
  * textures, and constant buffers.
@@ -528,6 +521,11 @@ struct brw_vs_ouput_sizes {
  *    |   . |     .                   |
  *    |   : |     :                   |
  *    |  24 | Texture 15              |
+ *    |-----|-------------------------|
+ *    |  25 | UBO 0                   |
+ *    |   . |     .                   |
+ *    |   : |     :                   |
+ *    |  36 | UBO 11                  |
  *    +-------------------------------+
  *
  * Our VS binding tables are programmed as follows:
@@ -539,6 +537,11 @@ struct brw_vs_ouput_sizes {
  *    |   . |     .                   |
  *    |   : |     :                   |
  *    |  16 | Texture 15              |
+ *    +-----+-------------------------+
+ *    |  17 | UBO 0                   |
+ *    |   . |     .                   |
+ *    |   : |     :                   |
+ *    |  28 | UBO 11                  |
  *    +-------------------------------+
  *
  * Our (gen6) GS binding tables are programmed as follows:
@@ -557,13 +560,15 @@ struct brw_vs_ouput_sizes {
 #define SURF_INDEX_DRAW(d)           (d)
 #define SURF_INDEX_FRAG_CONST_BUFFER (BRW_MAX_DRAW_BUFFERS + 1)
 #define SURF_INDEX_TEXTURE(t)        (BRW_MAX_DRAW_BUFFERS + 2 + (t))
+#define SURF_INDEX_WM_UBO(u)         (SURF_INDEX_TEXTURE(BRW_MAX_TEX_UNIT) + u)
 
 /** Maximum size of the binding table. */
-#define BRW_MAX_WM_SURFACES          SURF_INDEX_TEXTURE(BRW_MAX_TEX_UNIT)
+#define BRW_MAX_WM_SURFACES          SURF_INDEX_WM_UBO(BRW_MAX_WM_UBOS)
 
 #define SURF_INDEX_VERT_CONST_BUFFER (0)
 #define SURF_INDEX_VS_TEXTURE(t)     (SURF_INDEX_VERT_CONST_BUFFER + 1 + (t))
-#define BRW_MAX_VS_SURFACES          SURF_INDEX_VS_TEXTURE(BRW_MAX_TEX_UNIT)
+#define SURF_INDEX_VS_UBO(u)         (SURF_INDEX_VS_TEXTURE(BRW_MAX_TEX_UNIT) + u)
+#define BRW_MAX_VS_SURFACES          SURF_INDEX_VS_UBO(BRW_MAX_VS_UBOS)
 
 #define SURF_INDEX_SOL_BINDING(t)    ((t))
 #define BRW_MAX_GS_SURFACES          SURF_INDEX_SOL_BINDING(BRW_MAX_SOL_BINDINGS)
@@ -676,6 +681,7 @@ struct brw_vertex_buffer {
    uint32_t offset;
    /** Byte stride between elements in the uploaded array */
    GLuint stride;
+   GLuint step_rate;
 };
 struct brw_vertex_element {
    const struct gl_client_array *glarray;
@@ -724,6 +730,15 @@ struct brw_context
    bool has_pln;
    bool precompile;
 
+   /**
+    * Some versions of Gen hardware don't do centroid interpolation correctly
+    * on unlit pixels, causing incorrect values for derivatives near triangle
+    * edges.  Enabling this flag causes the fragment shader to use
+    * non-centroid interpolation for unlit pixels, at the expense of two extra
+    * fragment shader instructions.
+    */
+   bool needs_unlit_centroid_workaround;
+
    struct {
       struct brw_state_flags dirty;
    } state;
@@ -738,6 +753,7 @@ struct brw_context
 	      uint32_t handle;
 	      uint32_t offset;
 	      uint32_t stride;
+	      uint32_t step_rate;
       } current_buffers[VERT_ATTRIB_MAX];
 
       struct brw_vertex_element *enabled[VERT_ATTRIB_MAX];
@@ -960,6 +976,12 @@ struct brw_context
 
       drm_intel_bo *scratch_bo;
 
+      /**
+       * Buffer object used in place of multisampled null render targets on
+       * Gen6.  See brw_update_null_renderbuffer_surface().
+       */
+      drm_intel_bo *multisampled_null_render_target_bo;
+
       /** Offset in the program cache to the WM program */
       uint32_t prog_offset;
 
@@ -1036,6 +1058,8 @@ struct brw_context
       uint32_t offset_0_batch_start;
       uint32_t primitives_generated;
       uint32_t primitives_written;
+      bool counting_primitives_generated;
+      bool counting_primitives_written;
    } sol;
 
    uint32_t render_target_format[MESA_FORMAT_COUNT];
@@ -1046,6 +1070,8 @@ struct brw_context
       bool in_progress;
       bool enable_cut_index;
    } prim_restart;
+
+   uint32_t num_instances;
 };
 
 
@@ -1124,6 +1150,9 @@ brw_update_sol_surface(struct brw_context *brw,
                        struct gl_buffer_object *buffer_obj,
                        uint32_t *out_offset, unsigned num_vector_components,
                        unsigned stride_dwords, unsigned offset_dwords);
+void brw_upload_ubo_surfaces(struct brw_context *brw,
+			     struct gl_shader *shader,
+			     uint32_t *surf_offsets);
 
 /* gen6_sol.c */
 void
@@ -1151,7 +1180,8 @@ gen6_emit_3dstate_multisample(struct brw_context *brw,
                               unsigned num_samples);
 void
 gen6_emit_3dstate_sample_mask(struct brw_context *brw,
-                              unsigned num_samples);
+                              unsigned num_samples, float coverage,
+                              bool coverage_invert);
 
 /* gen7_urb.c */
 void
@@ -1197,37 +1227,6 @@ brw_fragment_program_const(const struct gl_fragment_program *p)
    return (const struct brw_fragment_program *) p;
 }
 
-static inline
-float convert_param(enum param_conversion conversion, const float *param)
-{
-   union {
-      float f;
-      uint32_t u;
-      int32_t i;
-   } fi;
-
-   switch (conversion) {
-   case PARAM_NO_CONVERT:
-      return *param;
-   case PARAM_CONVERT_F2I:
-      fi.i = *param;
-      return fi.f;
-   case PARAM_CONVERT_F2U:
-      fi.u = *param;
-      return fi.f;
-   case PARAM_CONVERT_F2B:
-      if (*param != 0.0)
-	 fi.i = 1;
-      else
-	 fi.i = 0;
-      return fi.f;
-   case PARAM_CONVERT_ZERO:
-      return 0.0;
-   default:
-      return *param;
-   }
-}
-
 /**
  * Pre-gen6, the register file of the EUs was shared between threads,
  * and each thread used some subset allocated on a 16-register block
@@ -1260,6 +1259,7 @@ brw_program_reloc(struct brw_context *brw, uint32_t state_offset,
 }
 
 bool brw_do_cubemap_normalize(struct exec_list *instructions);
+bool brw_lower_texture_gradients(struct exec_list *instructions);
 
 #ifdef __cplusplus
 }

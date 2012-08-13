@@ -50,6 +50,223 @@ extern "C" {
 #include "glsl/glsl_types.h"
 #include "glsl/ir_print_visitor.h"
 
+void
+fs_inst::init()
+{
+   memset(this, 0, sizeof(*this));
+   this->opcode = BRW_OPCODE_NOP;
+   this->conditional_mod = BRW_CONDITIONAL_NONE;
+
+   this->dst = reg_undef;
+   this->src[0] = reg_undef;
+   this->src[1] = reg_undef;
+   this->src[2] = reg_undef;
+}
+
+fs_inst::fs_inst()
+{
+   init();
+}
+
+fs_inst::fs_inst(enum opcode opcode)
+{
+   init();
+   this->opcode = opcode;
+}
+
+fs_inst::fs_inst(enum opcode opcode, fs_reg dst)
+{
+   init();
+   this->opcode = opcode;
+   this->dst = dst;
+
+   if (dst.file == GRF)
+      assert(dst.reg_offset >= 0);
+}
+
+fs_inst::fs_inst(enum opcode opcode, fs_reg dst, fs_reg src0)
+{
+   init();
+   this->opcode = opcode;
+   this->dst = dst;
+   this->src[0] = src0;
+
+   if (dst.file == GRF)
+      assert(dst.reg_offset >= 0);
+   if (src[0].file == GRF)
+      assert(src[0].reg_offset >= 0);
+}
+
+fs_inst::fs_inst(enum opcode opcode, fs_reg dst, fs_reg src0, fs_reg src1)
+{
+   init();
+   this->opcode = opcode;
+   this->dst = dst;
+   this->src[0] = src0;
+   this->src[1] = src1;
+
+   if (dst.file == GRF)
+      assert(dst.reg_offset >= 0);
+   if (src[0].file == GRF)
+      assert(src[0].reg_offset >= 0);
+   if (src[1].file == GRF)
+      assert(src[1].reg_offset >= 0);
+}
+
+fs_inst::fs_inst(enum opcode opcode, fs_reg dst,
+		 fs_reg src0, fs_reg src1, fs_reg src2)
+{
+   init();
+   this->opcode = opcode;
+   this->dst = dst;
+   this->src[0] = src0;
+   this->src[1] = src1;
+   this->src[2] = src2;
+
+   if (dst.file == GRF)
+      assert(dst.reg_offset >= 0);
+   if (src[0].file == GRF)
+      assert(src[0].reg_offset >= 0);
+   if (src[1].file == GRF)
+      assert(src[1].reg_offset >= 0);
+   if (src[2].file == GRF)
+      assert(src[2].reg_offset >= 0);
+}
+
+bool
+fs_inst::equals(fs_inst *inst)
+{
+   return (opcode == inst->opcode &&
+           dst.equals(inst->dst) &&
+           src[0].equals(inst->src[0]) &&
+           src[1].equals(inst->src[1]) &&
+           src[2].equals(inst->src[2]) &&
+           saturate == inst->saturate &&
+           predicated == inst->predicated &&
+           conditional_mod == inst->conditional_mod &&
+           mlen == inst->mlen &&
+           base_mrf == inst->base_mrf &&
+           sampler == inst->sampler &&
+           target == inst->target &&
+           eot == inst->eot &&
+           header_present == inst->header_present &&
+           shadow_compare == inst->shadow_compare &&
+           offset == inst->offset);
+}
+
+int
+fs_inst::regs_written()
+{
+   if (is_tex())
+      return 4;
+
+   /* The SINCOS and INT_DIV_QUOTIENT_AND_REMAINDER math functions return 2,
+    * but we don't currently use them...nor do we have an opcode for them.
+    */
+
+   return 1;
+}
+
+bool
+fs_inst::overwrites_reg(const fs_reg &reg)
+{
+   return (reg.file == dst.file &&
+           reg.reg == dst.reg &&
+           reg.reg_offset >= dst.reg_offset  &&
+           reg.reg_offset < dst.reg_offset + regs_written());
+}
+
+bool
+fs_inst::is_tex()
+{
+   return (opcode == SHADER_OPCODE_TEX ||
+           opcode == FS_OPCODE_TXB ||
+           opcode == SHADER_OPCODE_TXD ||
+           opcode == SHADER_OPCODE_TXF ||
+           opcode == SHADER_OPCODE_TXL ||
+           opcode == SHADER_OPCODE_TXS);
+}
+
+bool
+fs_inst::is_math()
+{
+   return (opcode == SHADER_OPCODE_RCP ||
+           opcode == SHADER_OPCODE_RSQ ||
+           opcode == SHADER_OPCODE_SQRT ||
+           opcode == SHADER_OPCODE_EXP2 ||
+           opcode == SHADER_OPCODE_LOG2 ||
+           opcode == SHADER_OPCODE_SIN ||
+           opcode == SHADER_OPCODE_COS ||
+           opcode == SHADER_OPCODE_INT_QUOTIENT ||
+           opcode == SHADER_OPCODE_INT_REMAINDER ||
+           opcode == SHADER_OPCODE_POW);
+}
+
+void
+fs_reg::init()
+{
+   memset(this, 0, sizeof(*this));
+   this->smear = -1;
+}
+
+/** Generic unset register constructor. */
+fs_reg::fs_reg()
+{
+   init();
+   this->file = BAD_FILE;
+}
+
+/** Immediate value constructor. */
+fs_reg::fs_reg(float f)
+{
+   init();
+   this->file = IMM;
+   this->type = BRW_REGISTER_TYPE_F;
+   this->imm.f = f;
+}
+
+/** Immediate value constructor. */
+fs_reg::fs_reg(int32_t i)
+{
+   init();
+   this->file = IMM;
+   this->type = BRW_REGISTER_TYPE_D;
+   this->imm.i = i;
+}
+
+/** Immediate value constructor. */
+fs_reg::fs_reg(uint32_t u)
+{
+   init();
+   this->file = IMM;
+   this->type = BRW_REGISTER_TYPE_UD;
+   this->imm.u = u;
+}
+
+/** Fixed brw_reg Immediate value constructor. */
+fs_reg::fs_reg(struct brw_reg fixed_hw_reg)
+{
+   init();
+   this->file = FIXED_HW_REG;
+   this->fixed_hw_reg = fixed_hw_reg;
+   this->type = fixed_hw_reg.type;
+}
+
+bool
+fs_reg::equals(const fs_reg &r) const
+{
+   return (file == r.file &&
+           reg == r.reg &&
+           reg_offset == r.reg_offset &&
+           type == r.type &&
+           negate == r.negate &&
+           abs == r.abs &&
+           memcmp(&fixed_hw_reg, &r.fixed_hw_reg,
+                  sizeof(fixed_hw_reg)) == 0 &&
+           smear == r.smear &&
+           imm.u == r.imm.u);
+}
+
 int
 fs_visitor::type_size(const struct glsl_type *type)
 {
@@ -101,6 +318,37 @@ fs_visitor::fail(const char *format, ...)
    if (INTEL_DEBUG & DEBUG_WM) {
       fprintf(stderr, "%s",  msg);
    }
+}
+
+fs_inst *
+fs_visitor::emit(enum opcode opcode)
+{
+   return emit(fs_inst(opcode));
+}
+
+fs_inst *
+fs_visitor::emit(enum opcode opcode, fs_reg dst)
+{
+   return emit(fs_inst(opcode, dst));
+}
+
+fs_inst *
+fs_visitor::emit(enum opcode opcode, fs_reg dst, fs_reg src0)
+{
+   return emit(fs_inst(opcode, dst, src0));
+}
+
+fs_inst *
+fs_visitor::emit(enum opcode opcode, fs_reg dst, fs_reg src0, fs_reg src1)
+{
+   return emit(fs_inst(opcode, dst, src0, src1));
+}
+
+fs_inst *
+fs_visitor::emit(enum opcode opcode, fs_reg dst,
+                 fs_reg src0, fs_reg src1, fs_reg src2)
+{
+   return emit(fs_inst(opcode, dst, src0, src1, src2));
 }
 
 void
@@ -177,7 +425,7 @@ fs_visitor::implied_mrf_writes(fs_inst *inst)
 int
 fs_visitor::virtual_grf_alloc(int size)
 {
-   if (virtual_grf_array_size <= virtual_grf_next) {
+   if (virtual_grf_array_size <= virtual_grf_count) {
       if (virtual_grf_array_size == 0)
 	 virtual_grf_array_size = 16;
       else
@@ -185,8 +433,8 @@ fs_visitor::virtual_grf_alloc(int size)
       virtual_grf_sizes = reralloc(mem_ctx, virtual_grf_sizes, int,
 				   virtual_grf_array_size);
    }
-   virtual_grf_sizes[virtual_grf_next] = size;
-   return virtual_grf_next++;
+   virtual_grf_sizes[virtual_grf_count] = size;
+   return virtual_grf_count++;
 }
 
 /** Fixed HW reg constructor. */
@@ -282,28 +530,6 @@ fs_visitor::setup_uniform_values(int loc, const glsl_type *type)
 
 	 assert(param < ARRAY_SIZE(c->prog_data.param));
 
-	 if (ctx->Const.NativeIntegers) {
-	    c->prog_data.param_convert[param] = PARAM_NO_CONVERT;
-	 } else {
-	    switch (type->base_type) {
-	    case GLSL_TYPE_FLOAT:
-	       c->prog_data.param_convert[param] = PARAM_NO_CONVERT;
-	       break;
-	    case GLSL_TYPE_UINT:
-	       c->prog_data.param_convert[param] = PARAM_CONVERT_F2U;
-	       break;
-	    case GLSL_TYPE_INT:
-	       c->prog_data.param_convert[param] = PARAM_CONVERT_F2I;
-	       break;
-	    case GLSL_TYPE_BOOL:
-	       c->prog_data.param_convert[param] = PARAM_CONVERT_F2B;
-	       break;
-	    default:
-	       assert(!"not reached");
-	       c->prog_data.param_convert[param] = PARAM_NO_CONVERT;
-	       break;
-	    }
-	 }
 	 this->param_index[param] = loc;
 	 this->param_offset[param] = i;
       }
@@ -361,8 +587,6 @@ fs_visitor::setup_builtin_uniform_values(ir_variable *ir)
 	    break;
 	 last_swiz = swiz;
 
-	 c->prog_data.param_convert[c->prog_data.nr_params] =
-	    PARAM_NO_CONVERT;
 	 this->param_index[c->prog_data.nr_params] = index;
 	 this->param_offset[c->prog_data.nr_params] = swiz;
 	 c->prog_data.nr_params++;
@@ -417,6 +641,28 @@ fs_visitor::emit_fragcoord_interpolation(ir_variable *ir)
    emit(BRW_OPCODE_MOV, wpos, this->wpos_w);
 
    return reg;
+}
+
+fs_inst *
+fs_visitor::emit_linterp(const fs_reg &attr, const fs_reg &interp,
+                         glsl_interp_qualifier interpolation_mode,
+                         bool is_centroid)
+{
+   brw_wm_barycentric_interp_mode barycoord_mode;
+   if (is_centroid) {
+      if (interpolation_mode == INTERP_QUALIFIER_SMOOTH)
+         barycoord_mode = BRW_WM_PERSPECTIVE_CENTROID_BARYCENTRIC;
+      else
+         barycoord_mode = BRW_WM_NONPERSPECTIVE_CENTROID_BARYCENTRIC;
+   } else {
+      if (interpolation_mode == INTERP_QUALIFIER_SMOOTH)
+         barycoord_mode = BRW_WM_PERSPECTIVE_PIXEL_BARYCENTRIC;
+      else
+         barycoord_mode = BRW_WM_NONPERSPECTIVE_PIXEL_BARYCENTRIC;
+   }
+   return emit(FS_OPCODE_LINTERP, attr,
+               this->delta_x[barycoord_mode],
+               this->delta_y[barycoord_mode], interp);
 }
 
 fs_reg *
@@ -482,14 +728,20 @@ fs_visitor::emit_general_interpolation(ir_variable *ir)
 		  emit(BRW_OPCODE_MOV, attr, fs_reg(1.0f));
 	       } else {
 		  struct brw_reg interp = interp_reg(location, k);
-                  brw_wm_barycentric_interp_mode barycoord_mode;
-                  if (interpolation_mode == INTERP_QUALIFIER_SMOOTH)
-                     barycoord_mode = BRW_WM_PERSPECTIVE_PIXEL_BARYCENTRIC;
-                  else
-                     barycoord_mode = BRW_WM_NONPERSPECTIVE_PIXEL_BARYCENTRIC;
-                  emit(FS_OPCODE_LINTERP, attr,
-                       this->delta_x[barycoord_mode],
-                       this->delta_y[barycoord_mode], fs_reg(interp));
+                  emit_linterp(attr, fs_reg(interp), interpolation_mode,
+                               ir->centroid);
+                  if (brw->needs_unlit_centroid_workaround && ir->centroid) {
+                     /* Get the pixel/sample mask into f0 so that we know
+                      * which pixels are lit.  Then, for each channel that is
+                      * unlit, replace the centroid data with non-centroid
+                      * data.
+                      */
+                     emit(FS_OPCODE_MOV_DISPATCH_TO_FLAGS, attr);
+                     fs_inst *inst = emit_linterp(attr, fs_reg(interp),
+                                                  interpolation_mode, false);
+                     inst->predicated = true;
+                     inst->predicate_inverse = true;
+                  }
 		  if (intel->gen < 6) {
 		     emit(BRW_OPCODE_MUL, attr, attr, this->pixel_w);
 		  }
@@ -702,11 +954,22 @@ fs_visitor::calculate_urb_setup()
    } else {
       /* FINISHME: The sf doesn't map VS->FS inputs for us very well. */
       for (unsigned int i = 0; i < VERT_RESULT_MAX; i++) {
+         /* Point size is packed into the header, not as a general attribute */
+         if (i == VERT_RESULT_PSIZ)
+            continue;
+
 	 if (c->key.vp_outputs_written & BITFIELD64_BIT(i)) {
 	    int fp_index = _mesa_vert_result_to_frag_attrib((gl_vert_result) i);
 
+	    /* The back color slot is skipped when the front color is
+	     * also written to.  In addition, some slots can be
+	     * written in the vertex shader and not read in the
+	     * fragment shader.  So the register number must always be
+	     * incremented, mapped or not.
+	     */
 	    if (fp_index >= 0)
-	       urb_setup[fp_index] = urb_next++;
+	       urb_setup[fp_index] = urb_next;
+            urb_next++;
 	 }
       }
 
@@ -770,7 +1033,7 @@ fs_visitor::assign_urb_setup()
 void
 fs_visitor::split_virtual_grfs()
 {
-   int num_vars = this->virtual_grf_next;
+   int num_vars = this->virtual_grf_count;
    bool split_grf[num_vars];
    int new_virtual_grf[num_vars];
 
@@ -796,8 +1059,10 @@ fs_visitor::split_virtual_grfs()
    foreach_list(node, &this->instructions) {
       fs_inst *inst = (fs_inst *)node;
 
-      /* Texturing produces 4 contiguous registers, so no splitting. */
-      if (inst->is_tex()) {
+      /* If there's a SEND message that requires contiguous destination
+       * registers, no splitting is allowed.
+       */
+      if (inst->regs_written() > 1) {
 	 split_grf[inst->dst.reg] = false;
       }
    }
@@ -892,7 +1157,6 @@ fs_visitor::remove_dead_constants()
 	  * about param_index and param_offset.
 	  */
 	 c->prog_data.param[remapped] = c->prog_data.param[i];
-	 c->prog_data.param_convert[remapped] = c->prog_data.param_convert[i];
       }
 
       c->prog_data.nr_params = new_nr_params;
@@ -961,9 +1225,11 @@ fs_visitor::setup_pull_constants()
 	    continue;
 
 	 fs_reg dst = fs_reg(this, glsl_type::float_type);
+	 fs_reg index = fs_reg((unsigned)SURF_INDEX_FRAG_CONST_BUFFER);
+	 fs_reg offset = fs_reg((unsigned)(((uniform_nr -
+					     pull_uniform_base) * 4) & ~15));
 	 fs_inst *pull = new(mem_ctx) fs_inst(FS_OPCODE_PULL_CONSTANT_LOAD,
-					      dst);
-	 pull->offset = ((uniform_nr - pull_uniform_base) * 4) & ~15;
+					      dst, index, offset);
 	 pull->ir = inst->ir;
 	 pull->annotation = inst->annotation;
 	 pull->base_mrf = 14;
@@ -980,8 +1246,6 @@ fs_visitor::setup_pull_constants()
 
    for (int i = 0; i < pull_uniform_count; i++) {
       c->prog_data.pull_param[i] = c->prog_data.param[pull_uniform_base + i];
-      c->prog_data.pull_param_convert[i] =
-	 c->prog_data.param_convert[pull_uniform_base + i];
    }
    c->prog_data.nr_params -= pull_uniform_count;
    c->prog_data.nr_pull_params = pull_uniform_count;
@@ -1125,15 +1389,18 @@ fs_visitor::propagate_constants()
 	       }
 	       break;
 
+            case FS_OPCODE_PULL_CONSTANT_LOAD:
+	       scan_inst->src[i] = inst->src[0];
+	       progress = true;
+	       break;
+
 	    default:
 	       break;
 	    }
 	 }
 
 	 if (scan_inst->dst.file == GRF &&
-	     scan_inst->dst.reg == inst->dst.reg &&
-	     (scan_inst->dst.reg_offset == inst->dst.reg_offset ||
-	      scan_inst->is_tex())) {
+             scan_inst->overwrites_reg(inst->dst)) {
 	    break;
 	 }
       }
@@ -1333,16 +1600,8 @@ fs_visitor::register_coalesce()
 	   !scan_inst->is_tail_sentinel();
 	   scan_inst = (fs_inst *)scan_inst->next) {
 	 if (scan_inst->dst.file == GRF) {
-	    if (scan_inst->dst.reg == inst->dst.reg &&
-		(scan_inst->dst.reg_offset == inst->dst.reg_offset ||
-		 scan_inst->is_tex())) {
-	       interfered = true;
-	       break;
-	    }
-	    if (inst->src[0].file == GRF &&
-		scan_inst->dst.reg == inst->src[0].reg &&
-		(scan_inst->dst.reg_offset == inst->src[0].reg_offset ||
-		 scan_inst->is_tex())) {
+	    if (scan_inst->overwrites_reg(inst->dst) ||
+                scan_inst->overwrites_reg(inst->src[0])) {
 	       interfered = true;
 	       break;
 	    }
@@ -1462,10 +1721,8 @@ fs_visitor::compute_to_mrf()
 	     * into a compute-to-MRF.
 	     */
 
-	    if (scan_inst->is_tex()) {
-	       /* texturing writes several continuous regs, so we can't
-		* compute-to-mrf that.
-		*/
+            /* SENDs can only write to GRFs, so no compute-to-MRF. */
+	    if (scan_inst->mlen) {
 	       break;
 	    }
 
@@ -1577,6 +1834,9 @@ fs_visitor::compute_to_mrf()
       }
    }
 
+   if (progress)
+      live_intervals_valid = false;
+
    return progress;
 }
 
@@ -1652,6 +1912,9 @@ fs_visitor::remove_duplicate_mrf_writes()
 	 last_mrf_move[inst->dst.reg] = inst;
       }
    }
+
+   if (progress)
+      live_intervals_valid = false;
 
    return progress;
 }
@@ -1758,7 +2021,6 @@ fs_visitor::run()
 
       if (0) {
 	 /* Debug of register spilling: Go spill everything. */
-	 int virtual_grf_count = virtual_grf_next;
 	 for (int i = 0; i < virtual_grf_count; i++) {
 	    spill_reg(i);
 	 }
@@ -1854,6 +2116,7 @@ brw_fs_precompile(struct gl_context *ctx, struct gl_shader_program *prog)
    struct gl_fragment_program *fp = (struct gl_fragment_program *)
       prog->_LinkedShaders[MESA_SHADER_FRAGMENT]->Program;
    struct brw_fragment_program *bfp = brw_fragment_program(fp);
+   bool program_uses_dfdy = fp->UsesDFdy;
 
    memset(&key, 0, sizeof(key));
 
@@ -1883,15 +2146,15 @@ brw_fs_precompile(struct gl_context *ctx, struct gl_shader_program *prog)
    key.clamp_fragment_color = true;
 
    for (int i = 0; i < BRW_MAX_TEX_UNIT; i++) {
-      if (fp->Base.ShadowSamplers & (1 << i))
-	 key.tex.compare_funcs[i] = GL_LESS;
-
       /* FINISHME: depth compares might use (0,0,0,W) for example */
       key.tex.swizzles[i] = SWIZZLE_XYZW;
    }
 
    if (fp->Base.InputsRead & FRAG_BIT_WPOS) {
       key.drawable_height = ctx->DrawBuffer->Height;
+   }
+
+   if ((fp->Base.InputsRead & FRAG_BIT_WPOS) || program_uses_dfdy) {
       key.render_to_fbo = _mesa_is_user_fbo(ctx->DrawBuffer);
    }
 

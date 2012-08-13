@@ -57,6 +57,47 @@
 #include "util/u_surface.h"
 
 
+static GLboolean
+st_renderbuffer_alloc_sw_storage(struct gl_context * ctx,
+                                 struct gl_renderbuffer *rb,
+                                 GLenum internalFormat,
+                                 GLuint width, GLuint height)
+{
+   struct pipe_screen *screen = st_context(ctx)->pipe->screen;
+   struct st_renderbuffer *strb = st_renderbuffer(rb);
+   enum pipe_format format;
+   size_t size;
+
+   free(strb->data);
+   strb->data = NULL;
+
+   if (internalFormat == GL_RGBA16_SNORM) {
+      /* Special case for software accum buffers.  Otherwise, if the
+       * call to st_choose_renderbuffer_format() fails (because the
+       * driver doesn't support signed 16-bit/channel colors) we'd
+       * just return without allocating the software accum buffer.
+       */
+      format = PIPE_FORMAT_R16G16B16A16_SNORM;
+   }
+   else {
+      format = st_choose_renderbuffer_format(screen, internalFormat, 0);
+
+      /* Not setting gl_renderbuffer::Format here will cause
+       * FRAMEBUFFER_UNSUPPORTED and ValidateFramebuffer will not be called.
+       */
+      if (format == PIPE_FORMAT_NONE) {
+         return GL_TRUE;
+      }
+   }
+
+   strb->Base.Format = st_pipe_format_to_mesa_format(format);
+
+   size = _mesa_format_image_size(strb->Base.Format, width, height, 1);
+   strb->data = malloc(size);
+   return strb->data != NULL;
+}
+
+
 /**
  * gl_renderbuffer::AllocStorage()
  * This is called to allocate the original drawing surface, and
@@ -72,100 +113,111 @@ st_renderbuffer_alloc_storage(struct gl_context * ctx,
    struct pipe_context *pipe = st->pipe;
    struct pipe_screen *screen = st->pipe->screen;
    struct st_renderbuffer *strb = st_renderbuffer(rb);
-   enum pipe_format format;
+   enum pipe_format format = PIPE_FORMAT_NONE;
    struct pipe_surface surf_tmpl;
-
-   if (internalFormat == GL_RGBA16_SNORM && strb->software) {
-      /* Special case for software accum buffers.  Otherwise, if the
-       * call to st_choose_renderbuffer_format() fails (because the
-       * driver doesn't support signed 16-bit/channel colors) we'd
-       * just return without allocating the software accum buffer.
-       */
-      format = PIPE_FORMAT_R16G16B16A16_SNORM;
-   }
-   else {
-      format = st_choose_renderbuffer_format(screen, internalFormat,
-                                             rb->NumSamples);
-   }
-
-   if (format == PIPE_FORMAT_NONE) {
-      return FALSE;
-   }
+   struct pipe_resource templ;
 
    /* init renderbuffer fields */
    strb->Base.Width  = width;
    strb->Base.Height = height;
-   strb->Base.Format = st_pipe_format_to_mesa_format(format);
    strb->Base._BaseFormat = _mesa_base_fbo_format(ctx, internalFormat);
-
    strb->defined = GL_FALSE;  /* undefined contents now */
 
    if (strb->software) {
-      size_t size;
-      
-      free(strb->data);
+      return st_renderbuffer_alloc_sw_storage(ctx, rb, internalFormat,
+                                              width, height);
+   }
 
-      size = _mesa_format_image_size(strb->Base.Format, width, height, 1);
-      
-      strb->data = malloc(size);
-      
-      return strb->data != NULL;
+   /* Free the old surface and texture
+    */
+   pipe_surface_reference( &strb->surface, NULL );
+   pipe_resource_reference( &strb->texture, NULL );
+
+   /* Handle multisample renderbuffers first.
+    *
+    * From ARB_framebuffer_object:
+    *   If <samples> is zero, then RENDERBUFFER_SAMPLES is set to zero.
+    *   Otherwise <samples> represents a request for a desired minimum
+    *   number of samples. Since different implementations may support
+    *   different sample counts for multisampled rendering, the actual
+    *   number of samples allocated for the renderbuffer image is
+    *   implementation dependent.  However, the resulting value for
+    *   RENDERBUFFER_SAMPLES is guaranteed to be greater than or equal
+    *   to <samples> and no more than the next larger sample count supported
+    *   by the implementation.
+    *
+    * So let's find the supported number of samples closest to NumSamples.
+    * (NumSamples == 1) is treated the same as (NumSamples == 0).
+    */
+   if (rb->NumSamples > 1) {
+      unsigned i;
+
+      for (i = rb->NumSamples; i <= ctx->Const.MaxSamples; i++) {
+         format = st_choose_renderbuffer_format(screen, internalFormat, i);
+
+         if (format != PIPE_FORMAT_NONE) {
+            rb->NumSamples = i;
+            break;
+         }
+      }
+   } else {
+      format = st_choose_renderbuffer_format(screen, internalFormat, 0);
+   }
+
+   /* Not setting gl_renderbuffer::Format here will cause
+    * FRAMEBUFFER_UNSUPPORTED and ValidateFramebuffer will not be called.
+    */
+   if (format == PIPE_FORMAT_NONE) {
+      return GL_TRUE;
+   }
+
+   strb->Base.Format = st_pipe_format_to_mesa_format(format);
+
+   if (width == 0 || height == 0) {
+      /* if size is zero, nothing to allocate */
+      return GL_TRUE;
+   }
+
+   /* Setup new texture template.
+    */
+   memset(&templ, 0, sizeof(templ));
+   templ.target = st->internal_target;
+   templ.format = format;
+   templ.width0 = width;
+   templ.height0 = height;
+   templ.depth0 = 1;
+   templ.array_size = 1;
+   templ.nr_samples = rb->NumSamples;
+   if (util_format_is_depth_or_stencil(format)) {
+      templ.bind = PIPE_BIND_DEPTH_STENCIL;
+   }
+   else if (strb->Base.Name != 0) {
+      /* this is a user-created renderbuffer */
+      templ.bind = PIPE_BIND_RENDER_TARGET;
    }
    else {
-      struct pipe_resource template;
-    
-      /* Free the old surface and texture
-       */
-      pipe_surface_reference( &strb->surface, NULL );
-      pipe_resource_reference( &strb->texture, NULL );
-
-      if (width == 0 || height == 0) {
-         /* if size is zero, nothing to allocate */
-         return GL_TRUE;
-      }
-
-      /* Setup new texture template.
-       */
-      memset(&template, 0, sizeof(template));
-      template.target = st->internal_target;
-      template.format = format;
-      template.width0 = width;
-      template.height0 = height;
-      template.depth0 = 1;
-      template.array_size = 1;
-      template.last_level = 0;
-      template.nr_samples = rb->NumSamples;
-      if (util_format_is_depth_or_stencil(format)) {
-         template.bind = PIPE_BIND_DEPTH_STENCIL;
-      }
-      else if (strb->Base.Name != 0) {
-         /* this is a user-created renderbuffer */
-         template.bind = PIPE_BIND_RENDER_TARGET;
-      }
-      else {
-         /* this is a window-system buffer */
-         template.bind = (PIPE_BIND_DISPLAY_TARGET |
-                          PIPE_BIND_RENDER_TARGET);
-      }
-
-      strb->texture = screen->resource_create(screen, &template);
-
-      if (!strb->texture) 
-         return FALSE;
-
-      u_surface_default_template(&surf_tmpl, strb->texture, template.bind);
-      strb->surface = pipe->create_surface(pipe,
-                                           strb->texture,
-                                           &surf_tmpl);
-      if (strb->surface) {
-         assert(strb->surface->texture);
-         assert(strb->surface->format);
-         assert(strb->surface->width == width);
-         assert(strb->surface->height == height);
-      }
-
-      return strb->surface != NULL;
+      /* this is a window-system buffer */
+      templ.bind = (PIPE_BIND_DISPLAY_TARGET |
+                    PIPE_BIND_RENDER_TARGET);
    }
+
+   strb->texture = screen->resource_create(screen, &templ);
+
+   if (!strb->texture)
+      return FALSE;
+
+   u_surface_default_template(&surf_tmpl, strb->texture, templ.bind);
+   strb->surface = pipe->create_surface(pipe,
+                                        strb->texture,
+                                        &surf_tmpl);
+   if (strb->surface) {
+      assert(strb->surface->texture);
+      assert(strb->surface->format);
+      assert(strb->surface->width == width);
+      assert(strb->surface->height == height);
+   }
+
+   return strb->surface != NULL;
 }
 
 
@@ -239,13 +291,21 @@ st_new_renderbuffer_fb(enum pipe_format format, int samples, boolean sw)
    case PIPE_FORMAT_R8G8B8A8_UNORM:
    case PIPE_FORMAT_B8G8R8A8_UNORM:
    case PIPE_FORMAT_A8R8G8B8_UNORM:
+      strb->Base.InternalFormat = GL_RGBA8;
+      break;
    case PIPE_FORMAT_R8G8B8X8_UNORM:
    case PIPE_FORMAT_B8G8R8X8_UNORM:
    case PIPE_FORMAT_X8R8G8B8_UNORM:
+      strb->Base.InternalFormat = GL_RGB8;
+      break;
    case PIPE_FORMAT_B5G5R5A1_UNORM:
+      strb->Base.InternalFormat = GL_RGB5_A1;
+      break;
    case PIPE_FORMAT_B4G4R4A4_UNORM:
+      strb->Base.InternalFormat = GL_RGBA4;
+      break;
    case PIPE_FORMAT_B5G6R5_UNORM:
-      strb->Base.InternalFormat = GL_RGBA;
+      strb->Base.InternalFormat = GL_RGB565;
       break;
    case PIPE_FORMAT_Z16_UNORM:
       strb->Base.InternalFormat = GL_DEPTH_COMPONENT16;
@@ -420,6 +480,16 @@ st_finish_render_texture(struct gl_context *ctx,
 }
 
 
+/** Debug helper */
+static void
+st_fbo_invalid(const char *reason)
+{
+   if (MESA_DEBUG_FLAGS & DEBUG_INCOMPLETE_FBO) {
+      _mesa_debug(NULL, "Invalid FBO: %s\n", reason);
+   }
+}
+
+
 /**
  * Validate a renderbuffer attachment for a particular set of bindings.
  */
@@ -432,6 +502,7 @@ st_validate_attachment(struct gl_context *ctx,
    const struct st_texture_object *stObj = st_texture_object(att->Texture);
    enum pipe_format format;
    gl_format texFormat;
+   GLboolean valid;
 
    /* Only validate texture attachments for now, since
     * st_renderbuffer_alloc_storage makes sure that
@@ -455,9 +526,14 @@ st_validate_attachment(struct gl_context *ctx,
       format = st_mesa_format_to_pipe_format(linearFormat);
    }
 
-   return screen->is_format_supported(screen, format,
+   valid = screen->is_format_supported(screen, format,
                                       PIPE_TEXTURE_2D,
                                       stObj->pt->nr_samples, bindings);
+   if (!valid) {
+      st_fbo_invalid("Invalid format");
+   }
+
+   return valid;
 }
 
 
@@ -506,12 +582,14 @@ st_validate_framebuffer(struct gl_context *ctx, struct gl_framebuffer *fb)
          screen->get_param(screen, PIPE_CAP_MIXED_COLORBUFFER_FORMATS) != 0;
 
    if (depth->Type && stencil->Type && depth->Type != stencil->Type) {
+      st_fbo_invalid("Different Depth/Stencil buffer formats");
       fb->_Status = GL_FRAMEBUFFER_UNSUPPORTED_EXT;
       return;
    }
    if (depth->Type == GL_RENDERBUFFER_EXT &&
        stencil->Type == GL_RENDERBUFFER_EXT &&
        depth->Renderbuffer != stencil->Renderbuffer) {
+      st_fbo_invalid("Separate Depth/Stencil buffers");
       fb->_Status = GL_FRAMEBUFFER_UNSUPPORTED_EXT;
       return;
    }
@@ -519,6 +597,7 @@ st_validate_framebuffer(struct gl_context *ctx, struct gl_framebuffer *fb)
        stencil->Type == GL_TEXTURE &&
        depth->Texture != stencil->Texture) {
       fb->_Status = GL_FRAMEBUFFER_UNSUPPORTED_EXT;
+      st_fbo_invalid("Different Depth/Stencil textures");
       return;
    }
 
@@ -561,6 +640,7 @@ st_validate_framebuffer(struct gl_context *ctx, struct gl_framebuffer *fb)
             first_format = format;
          } else if (format != first_format) {
             fb->_Status = GL_FRAMEBUFFER_UNSUPPORTED_EXT;
+            st_fbo_invalid("Mixed color formats");
             return;
          }
       }

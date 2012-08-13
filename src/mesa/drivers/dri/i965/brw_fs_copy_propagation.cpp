@@ -31,6 +31,39 @@ struct acp_entry : public exec_node {
 };
 }
 
+bool
+fs_visitor::try_copy_propagate(fs_inst *inst, int arg, acp_entry *entry)
+{
+   if (inst->src[arg].file != entry->dst.file ||
+       inst->src[arg].reg != entry->dst.reg ||
+       inst->src[arg].reg_offset != entry->dst.reg_offset) {
+      return false;
+   }
+
+   /* See resolve_ud_negate() and comment in brw_fs_emit.cpp. */
+   if (inst->conditional_mod &&
+       inst->src[arg].type == BRW_REGISTER_TYPE_UD &&
+       entry->src.negate)
+      return false;
+
+   bool has_source_modifiers = entry->src.abs || entry->src.negate;
+
+   if (intel->gen == 6 && inst->is_math() &&
+       (has_source_modifiers || entry->src.file == UNIFORM))
+      return false;
+
+   inst->src[arg].file = entry->src.file;
+   inst->src[arg].reg = entry->src.reg;
+   inst->src[arg].reg_offset = entry->src.reg_offset;
+
+   if (!inst->src[arg].abs) {
+      inst->src[arg].abs = entry->src.abs;
+      inst->src[arg].negate ^= entry->src.negate;
+   }
+
+   return true;
+}
+
 /** @file brw_fs_copy_propagation.cpp
  *
  * Support for local copy propagation by walking the list of instructions
@@ -58,35 +91,18 @@ fs_visitor::opt_copy_propagate_local(void *mem_ctx,
 	 acp_entry *entry = (acp_entry *)entry_node;
 
 	 for (int i = 0; i < 3; i++) {
-	    if (inst->src[i].file == entry->dst.file &&
-		inst->src[i].reg == entry->dst.reg &&
-		inst->src[i].reg_offset == entry->dst.reg_offset) {
-	       inst->src[i].reg = entry->src.reg;
-	       inst->src[i].reg_offset = entry->src.reg_offset;
+	    if (try_copy_propagate(inst, i, entry))
 	       progress = true;
-	    }
 	 }
       }
 
       /* kill the destination from the ACP */
       if (inst->dst.file == GRF) {
-	 int start_offset = inst->dst.reg_offset;
-	 int end_offset = start_offset + inst->regs_written();
-
 	 foreach_list_safe(entry_node, acp) {
 	    acp_entry *entry = (acp_entry *)entry_node;
 
-	    if (entry->dst.file == GRF &&
-		entry->dst.reg == inst->dst.reg &&
-		entry->dst.reg_offset >= start_offset &&
-		entry->dst.reg_offset < end_offset) {
-	       entry->remove();
-	       continue;
-	    }
-	    if (entry->src.file == GRF &&
-		entry->src.reg == inst->dst.reg &&
-		entry->src.reg_offset >= start_offset &&
-		entry->src.reg_offset < end_offset) {
+	    if (inst->overwrites_reg(entry->dst) ||
+                inst->overwrites_reg(entry->src)) {
 	       entry->remove();
 	    }
 	 }
@@ -95,17 +111,16 @@ fs_visitor::opt_copy_propagate_local(void *mem_ctx,
       /* If this instruction is a raw copy, add it to the ACP. */
       if (inst->opcode == BRW_OPCODE_MOV &&
 	  inst->dst.file == GRF &&
-	  inst->src[0].file == GRF &&
-	  (inst->src[0].reg != inst->dst.reg ||
-	   inst->src[0].reg_offset != inst->dst.reg_offset) &&
+	  ((inst->src[0].file == GRF &&
+	    (inst->src[0].reg != inst->dst.reg ||
+	     inst->src[0].reg_offset != inst->dst.reg_offset)) ||
+	   inst->src[0].file == UNIFORM) &&
 	  inst->src[0].type == inst->dst.type &&
 	  !inst->saturate &&
 	  !inst->predicated &&
 	  !inst->force_uncompressed &&
 	  !inst->force_sechalf &&
-	  inst->src[0].smear == -1 &&
-	  !inst->src[0].abs &&
-	  !inst->src[0].negate) {
+	  inst->src[0].smear == -1) {
 	 acp_entry *entry = ralloc(mem_ctx, acp_entry);
 	 entry->dst = inst->dst;
 	 entry->src = inst->src[0];
@@ -132,6 +147,9 @@ fs_visitor::opt_copy_propagate()
    }
 
    ralloc_free(mem_ctx);
+
+   if (progress)
+      live_intervals_valid = false;
 
    return progress;
 }

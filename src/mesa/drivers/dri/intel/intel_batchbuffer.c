@@ -188,8 +188,13 @@ do_flush_locked(struct intel_context *intel)
       if (ret == 0) {
          if (unlikely(INTEL_DEBUG & DEBUG_AUB) && intel->vtbl.annotate_aub)
             intel->vtbl.annotate_aub(intel);
-	 ret = drm_intel_bo_mrb_exec(batch->bo, 4*batch->used, NULL, 0, 0,
-				     flags);
+	 if (intel->hw_ctx == NULL || batch->is_blit) {
+	    ret = drm_intel_bo_mrb_exec(batch->bo, 4 * batch->used, NULL, 0, 0,
+					flags);
+	 } else {
+	    ret = drm_intel_gem_bo_context_exec(batch->bo, intel->hw_ctx,
+						4 * batch->used, flags);
+	 }
       }
    }
 
@@ -375,21 +380,21 @@ intel_emit_depth_stall_flushes(struct intel_context *intel)
    assert(intel->gen >= 6 && intel->gen <= 7);
 
    BEGIN_BATCH(4);
-   OUT_BATCH(_3DSTATE_PIPE_CONTROL);
+   OUT_BATCH(_3DSTATE_PIPE_CONTROL | (4 - 2));
    OUT_BATCH(PIPE_CONTROL_DEPTH_STALL);
    OUT_BATCH(0); /* address */
    OUT_BATCH(0); /* write data */
    ADVANCE_BATCH()
 
    BEGIN_BATCH(4);
-   OUT_BATCH(_3DSTATE_PIPE_CONTROL);
+   OUT_BATCH(_3DSTATE_PIPE_CONTROL | (4 - 2));
    OUT_BATCH(PIPE_CONTROL_DEPTH_CACHE_FLUSH);
    OUT_BATCH(0); /* address */
    OUT_BATCH(0); /* write data */
    ADVANCE_BATCH();
 
    BEGIN_BATCH(4);
-   OUT_BATCH(_3DSTATE_PIPE_CONTROL);
+   OUT_BATCH(_3DSTATE_PIPE_CONTROL | (4 - 2));
    OUT_BATCH(PIPE_CONTROL_DEPTH_STALL);
    OUT_BATCH(0); /* address */
    OUT_BATCH(0); /* write data */
@@ -410,7 +415,7 @@ gen7_emit_vs_workaround_flush(struct intel_context *intel)
    assert(intel->gen == 7);
 
    BEGIN_BATCH(4);
-   OUT_BATCH(_3DSTATE_PIPE_CONTROL);
+   OUT_BATCH(_3DSTATE_PIPE_CONTROL | (4 - 2));
    OUT_BATCH(PIPE_CONTROL_DEPTH_STALL | PIPE_CONTROL_WRITE_IMMEDIATE);
    OUT_RELOC(intel->batch.workaround_bo,
 	     I915_GEM_DOMAIN_INSTRUCTION, I915_GEM_DOMAIN_INSTRUCTION, 0);
@@ -462,7 +467,7 @@ intel_emit_post_sync_nonzero_flush(struct intel_context *intel)
       return;
 
    BEGIN_BATCH(4);
-   OUT_BATCH(_3DSTATE_PIPE_CONTROL);
+   OUT_BATCH(_3DSTATE_PIPE_CONTROL | (4 - 2));
    OUT_BATCH(PIPE_CONTROL_CS_STALL |
 	     PIPE_CONTROL_STALL_AT_SCOREBOARD);
    OUT_BATCH(0); /* address */
@@ -470,7 +475,7 @@ intel_emit_post_sync_nonzero_flush(struct intel_context *intel)
    ADVANCE_BATCH();
 
    BEGIN_BATCH(4);
-   OUT_BATCH(_3DSTATE_PIPE_CONTROL);
+   OUT_BATCH(_3DSTATE_PIPE_CONTROL | (4 - 2));
    OUT_BATCH(PIPE_CONTROL_WRITE_IMMEDIATE);
    OUT_RELOC(intel->batch.workaround_bo,
 	     I915_GEM_DOMAIN_INSTRUCTION, I915_GEM_DOMAIN_INSTRUCTION, 0);
@@ -509,7 +514,7 @@ intel_batchbuffer_emit_mi_flush(struct intel_context *intel)
 	 }
 
 	 BEGIN_BATCH(4);
-	 OUT_BATCH(_3DSTATE_PIPE_CONTROL);
+	 OUT_BATCH(_3DSTATE_PIPE_CONTROL | (4 - 2));
 	 OUT_BATCH(PIPE_CONTROL_INSTRUCTION_FLUSH |
 		   PIPE_CONTROL_WRITE_FLUSH |
 		   PIPE_CONTROL_DEPTH_CACHE_FLUSH |
@@ -523,7 +528,7 @@ intel_batchbuffer_emit_mi_flush(struct intel_context *intel)
       }
    } else if (intel->gen >= 4) {
       BEGIN_BATCH(4);
-      OUT_BATCH(_3DSTATE_PIPE_CONTROL |
+      OUT_BATCH(_3DSTATE_PIPE_CONTROL | (4 - 2) |
 		PIPE_CONTROL_WRITE_FLUSH |
 		PIPE_CONTROL_NO_WRITE);
       OUT_BATCH(0); /* write address */

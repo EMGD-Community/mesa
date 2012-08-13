@@ -116,11 +116,6 @@
 #define PKT3_PREDICATE(x)               (((x) >> 0) & 0x1)
 #define PKT0(index, count) (PKT_TYPE_S(0) | PKT0_BASE_INDEX_S(index) | PKT_COUNT_S(count))
 
-#define RADEON_CP_PACKET3_COMPUTE_MODE 0x00000002
-
-/*Evergreen Compute packet3*/
-#define PKT3C(op, count, predicate) (PKT_TYPE_S(3) | PKT3_IT_OPCODE_S(op) | PKT_COUNT_S(count) | PKT3_PREDICATE(predicate) | RADEON_CP_PACKET3_COMPUTE_MODE)
-
 /* Registers */
 #define R_0084FC_CP_STRMOUT_CNTL		     0x000084FC
 #define   S_0084FC_OFFSET_UPDATE_DONE(x)		(((x) & 0x1) << 0)
@@ -482,6 +477,8 @@
 #define   S_028808_MODE(x)                             (((x) & 0x7) << 4)
 #define   G_028808_MODE(x)                             (((x) >> 4) & 0x7)
 #define   C_028808_MODE                                0xFFFFFF8F
+#define     V_028808_CB_DISABLE				0
+#define     V_028808_CB_NORMAL				1
 #define   S_028808_ROP3(x)                             (((x) & 0xFF) << 16)
 #define   G_028808_ROP3(x)                             (((x) >> 16) & 0xFF)
 #define   C_028808_ROP3                                0xFF00FFFF
@@ -746,6 +743,13 @@
 #define   S_02880C_DUAL_EXPORT_ENABLE(x)               (((x) & 0x1) << 9)
 #define   G_02880C_DUAL_EXPORT_ENABLE(x)               (((x) >> 9) & 0x1)
 #define   C_02880C_DUAL_EXPORT_ENABLE                  0xFFFFFDFF
+#define   S_02880C_DB_SOURCE_FORMAT(x)                 (((x) & 0x3) << 13)
+#define   G_02880C_DB_SOURCE_FORMAT(x)                 (((x) >> 13) & 0x3)
+#define   C_02880C_DB_SOURCE_FORMAT                    0xFFFF9FFF
+#define     V_02880C_EXPORT_DB_FULL                    0x00
+#define     V_02880C_EXPORT_DB_FOUR16                  0x01
+#define     V_02880C_EXPORT_DB_TWO                     0x02
+
 #define R_028A00_PA_SU_POINT_SIZE                    0x028A00
 #define   S_028A00_HEIGHT(x)                           (((x) & 0xFFFF) << 0)
 #define   G_028A00_HEIGHT(x)                           (((x) >> 0) & 0xFFFF)

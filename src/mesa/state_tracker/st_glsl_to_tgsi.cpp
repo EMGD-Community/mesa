@@ -304,7 +304,6 @@ public:
    int samplers_used;
    bool indirect_addr_temps;
    bool indirect_addr_consts;
-   int num_clip_distances;
    
    int glsl_version;
    bool native_integers;
@@ -1449,9 +1448,29 @@ glsl_to_tgsi_visitor::visit(ir_expression *ir)
       emit(ir, TGSI_OPCODE_DDX, result_dst, op[0]);
       break;
    case ir_unop_dFdy:
-      op[0].negate = ~op[0].negate;
-      emit(ir, TGSI_OPCODE_DDY, result_dst, op[0]);
+   {
+      /* The X component contains 1 or -1 depending on whether the framebuffer
+       * is a FBO or the window system buffer, respectively.
+       * It is then multiplied with the source operand of DDY.
+       */
+      static const gl_state_index transform_y_state[STATE_LENGTH]
+         = { STATE_INTERNAL, STATE_FB_WPOS_Y_TRANSFORM };
+
+      unsigned transform_y_index =
+         _mesa_add_state_reference(this->prog->Parameters,
+                                   transform_y_state);
+
+      st_src_reg transform_y = st_src_reg(PROGRAM_STATE_VAR,
+                                          transform_y_index,
+                                          glsl_type::vec4_type);
+      transform_y.swizzle = SWIZZLE_XXXX;
+
+      st_src_reg temp = get_temp(glsl_type::vec4_type);
+
+      emit(ir, TGSI_OPCODE_MUL, st_dst_reg(temp), transform_y, op[0]);
+      emit(ir, TGSI_OPCODE_DDY, result_dst, temp);
       break;
+   }
 
    case ir_unop_noise: {
       /* At some point, a motivated person could add a better
@@ -1762,6 +1781,18 @@ glsl_to_tgsi_visitor::visit(ir_expression *ir)
       else
          emit(ir, TGSI_OPCODE_TRUNC, result_dst, op[0]);
       break;
+   case ir_unop_f2u:
+      if (native_integers)
+         emit(ir, TGSI_OPCODE_F2U, result_dst, op[0]);
+      else
+         emit(ir, TGSI_OPCODE_TRUNC, result_dst, op[0]);
+      break;
+   case ir_unop_bitcast_f2i:
+   case ir_unop_bitcast_f2u:
+   case ir_unop_bitcast_i2f:
+   case ir_unop_bitcast_u2f:
+      result_src = op[0];
+      break;
    case ir_unop_f2b:
       emit(ir, TGSI_OPCODE_SNE, result_dst, op[0], st_src_reg_for_float(0.0));
       break;
@@ -1834,6 +1865,10 @@ glsl_to_tgsi_visitor::visit(ir_expression *ir)
       }
 
       assert(!"GLSL 1.30 features unsupported");
+      break;
+
+   case ir_binop_ubo_load:
+      assert(!"not yet supported");
       break;
 
    case ir_quadop_vector:
@@ -2747,8 +2782,6 @@ glsl_to_tgsi_visitor::visit(ir_return *ir)
 void
 glsl_to_tgsi_visitor::visit(ir_discard *ir)
 {
-   struct gl_fragment_program *fp = (struct gl_fragment_program *)this->prog;
-
    if (ir->condition) {
       ir->condition->accept(this);
       this->result.negate = ~this->result.negate;
@@ -2756,8 +2789,6 @@ glsl_to_tgsi_visitor::visit(ir_discard *ir)
    } else {
       emit(ir, TGSI_OPCODE_KILP);
    }
-
-   fp->UsesKill = GL_TRUE;
 }
 
 void
@@ -2813,7 +2844,6 @@ glsl_to_tgsi_visitor::glsl_to_tgsi_visitor()
    samplers_used = 0;
    indirect_addr_temps = false;
    indirect_addr_consts = false;
-   num_clip_distances = 0;
    glsl_version = 0;
    native_integers = false;
    mem_ctx = ralloc_context(NULL);
@@ -2883,13 +2913,15 @@ set_uniform_initializer(struct gl_context *ctx, void *mem_ctx,
       return;
    }
 
-   int loc = _mesa_get_uniform_location(ctx, shader_program, name);
-
-   if (loc == -1) {
+   unsigned offset;
+   unsigned index = _mesa_get_uniform_location(ctx, shader_program, name,
+					       &offset);
+   if (offset == GL_INVALID_INDEX) {
       fail_link(shader_program,
         	"Couldn't find uniform for initializer %s\n", name);
       return;
    }
+   int loc = _mesa_uniform_merge_location_offset(index, offset);
 
    for (unsigned int i = 0; i < (type->is_array() ? type->length : 1); i++) {
       ir_constant *element;
@@ -4146,6 +4178,7 @@ translate_tex_offset(struct st_translate *t,
    offset.SwizzleX = in_offset->SwizzleX;
    offset.SwizzleY = in_offset->SwizzleY;
    offset.SwizzleZ = in_offset->SwizzleZ;
+   offset.Padding = 0;
 
    return offset;
 }
@@ -4473,6 +4506,7 @@ st_translate_program(
    const ubyte inputSemanticName[],
    const ubyte inputSemanticIndex[],
    const GLuint interpMode[],
+   const GLboolean is_centroid[],
    GLuint numOutputs,
    const GLuint outputMapping[],
    const ubyte outputSemanticName[],
@@ -4514,10 +4548,11 @@ st_translate_program(
     */
    if (procType == TGSI_PROCESSOR_FRAGMENT) {
       for (i = 0; i < numInputs; i++) {
-         t->inputs[i] = ureg_DECL_fs_input(ureg,
-                                           inputSemanticName[i],
-                                           inputSemanticIndex[i],
-                                           interpMode[i]);
+         t->inputs[i] = ureg_DECL_fs_input_cyl_centroid(ureg,
+                                                        inputSemanticName[i],
+                                                        inputSemanticIndex[i],
+                                                        interpMode[i], 0,
+                                                        is_centroid[i]);
       }
 
       if (proginfo->InputsRead & FRAG_BIT_WPOS) {
@@ -4581,17 +4616,9 @@ st_translate_program(
       }
 
       for (i = 0; i < numOutputs; i++) {
-         if (outputSemanticName[i] == TGSI_SEMANTIC_CLIPDIST) {
-            int mask = ((1 << (program->num_clip_distances - 4*outputSemanticIndex[i])) - 1) & TGSI_WRITEMASK_XYZW;
-            t->outputs[i] = ureg_DECL_output_masked(ureg,
-                                                    outputSemanticName[i],
-                                                    outputSemanticIndex[i],
-                                                    mask);
-         } else {
-            t->outputs[i] = ureg_DECL_output(ureg,
-                                             outputSemanticName[i],
-                                             outputSemanticIndex[i]);
-         }
+         t->outputs[i] = ureg_DECL_output(ureg,
+                                          outputSemanticName[i],
+                                          outputSemanticIndex[i]);
       }
       if (passthrough_edgeflags)
          emit_edgeflags(t);
@@ -4613,6 +4640,25 @@ st_translate_program(
          if (sysInputs & (1 << i)) {
             unsigned semName = mesa_sysval_to_semantic[i];
             t->systemValues[i] = ureg_DECL_system_value(ureg, numSys, semName, 0);
+            if (semName == TGSI_SEMANTIC_INSTANCEID ||
+                semName == TGSI_SEMANTIC_VERTEXID) {
+               /* From Gallium perspective, these system values are always
+                * integer, and require native integer support.  However, if
+                * native integer is supported on the vertex stage but not the
+                * pixel stage (e.g, i915g + draw), Mesa will generate IR that
+                * assumes these system values are floats. To resolve the
+                * inconsistency, we insert a U2F.
+                */
+               struct st_context *st = st_context(ctx);
+               struct pipe_screen *pscreen = st->pipe->screen;
+               assert(procType == TGSI_PROCESSOR_VERTEX);
+               assert(pscreen->get_shader_param(pscreen, PIPE_SHADER_VERTEX, PIPE_SHADER_CAP_INTEGERS));
+               if (!ctx->Const.NativeIntegers) {
+                  struct ureg_dst temp = ureg_DECL_local_temporary(t->ureg);
+                  ureg_U2F( t->ureg, ureg_writemask(temp, TGSI_WRITEMASK_X), t->systemValues[i]);
+                  t->systemValues[i] = ureg_scalar(ureg_src(temp), 0);
+               }
+            }
             numSys++;
             sysInputs &= ~(1 << i);
          }
@@ -4747,10 +4793,9 @@ out:
 static struct gl_program *
 get_mesa_program(struct gl_context *ctx,
                  struct gl_shader_program *shader_program,
-                 struct gl_shader *shader,
-                 int num_clip_distances)
+                 struct gl_shader *shader)
 {
-   glsl_to_tgsi_visitor* v = new glsl_to_tgsi_visitor();
+   glsl_to_tgsi_visitor* v;
    struct gl_program *prog;
    GLenum target;
    const char *target_string;
@@ -4782,13 +4827,13 @@ get_mesa_program(struct gl_context *ctx,
    if (!prog)
       return NULL;
    prog->Parameters = _mesa_new_parameter_list();
+   v = new glsl_to_tgsi_visitor();
    v->ctx = ctx;
    v->prog = prog;
    v->shader_program = shader_program;
    v->options = options;
    v->glsl_version = ctx->Const.GLSLVersion;
    v->native_integers = ctx->Const.NativeIntegers;
-   v->num_clip_distances = num_clip_distances;
 
    _mesa_generate_parameters_list_for_uniforms(shader_program, shader,
 					       prog->Parameters);
@@ -4913,25 +4958,6 @@ get_mesa_program(struct gl_context *ctx,
    return prog;
 }
 
-/**
- * Searches through the IR for a declaration of gl_ClipDistance and returns the
- * declared size of the gl_ClipDistance array.  Returns 0 if gl_ClipDistance is
- * not declared in the IR.
- */
-int get_clip_distance_size(exec_list *ir)
-{
-   foreach_iter (exec_list_iterator, iter, *ir) {
-      ir_instruction *inst = (ir_instruction *)iter.get();
-      ir_variable *var = inst->as_variable();
-      if (var == NULL) continue;
-      if (!strcmp(var->name, "gl_ClipDistance")) {
-         return var->type->length;
-      }
-   }
-   
-   return 0;
-}
-
 extern "C" {
 
 struct gl_shader *
@@ -4970,7 +4996,6 @@ st_new_shader_program(struct gl_context *ctx, GLuint name)
 GLboolean
 st_link_shader(struct gl_context *ctx, struct gl_shader_program *prog)
 {
-   int num_clip_distances[MESA_SHADER_TYPES];
    assert(prog->LinkStatus);
 
    for (unsigned i = 0; i < MESA_SHADER_TYPES; i++) {
@@ -4981,11 +5006,6 @@ st_link_shader(struct gl_context *ctx, struct gl_shader_program *prog)
       exec_list *ir = prog->_LinkedShaders[i]->ir;
       const struct gl_shader_compiler_options *options =
             &ctx->ShaderCompilerOptions[_mesa_shader_type_to_index(prog->_LinkedShaders[i]->Type)];
-
-      /* We have to determine the length of the gl_ClipDistance array before
-       * the array is lowered to two vec4s by lower_clip_distance().
-       */
-      num_clip_distances[i] = get_clip_distance_size(ir);
 
       do {
          unsigned what_to_lower = MOD_TO_FRACT | DIV_TO_MUL_RCP |
@@ -5008,7 +5028,6 @@ st_link_shader(struct gl_context *ctx, struct gl_shader_program *prog)
 	   || progress;
 
          progress = lower_quadop_vector(ir, false) || progress;
-         progress = lower_clip_distance(ir) || progress;
 
          if (options->MaxIfDepth == 0)
             progress = lower_discard(ir) || progress;
@@ -5043,8 +5062,7 @@ st_link_shader(struct gl_context *ctx, struct gl_shader_program *prog)
       if (prog->_LinkedShaders[i] == NULL)
          continue;
 
-      linked_prog = get_mesa_program(ctx, prog, prog->_LinkedShaders[i],
-                                     num_clip_distances[i]);
+      linked_prog = get_mesa_program(ctx, prog, prog->_LinkedShaders[i]);
 
       if (linked_prog) {
 	 static const GLenum targets[] = {

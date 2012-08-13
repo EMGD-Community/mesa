@@ -34,6 +34,7 @@
 
 #include "main/imports.h"
 #include "main/context.h"
+#include "main/glformats.h"
 #include "main/texstore.h"
 #include "main/image.h"
 #include "main/macros.h"
@@ -792,6 +793,10 @@ static const struct format_mapping format_map[] = {
       { GL_RGB5, GL_RGB4 },
       { PIPE_FORMAT_B5G6R5_UNORM, PIPE_FORMAT_B5G5R5A1_UNORM,
         DEFAULT_RGBA_FORMATS }
+   },
+   {
+      { GL_RGB565 },
+      { PIPE_FORMAT_B5G6R5_UNORM, DEFAULT_RGBA_FORMATS }
    },
 
    /* basic Alpha formats */

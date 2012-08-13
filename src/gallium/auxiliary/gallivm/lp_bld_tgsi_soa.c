@@ -62,6 +62,7 @@
 #include "lp_bld_limits.h"
 #include "lp_bld_debug.h"
 #include "lp_bld_printf.h"
+#include "lp_bld_sample.h"
 
 
 static void lp_exec_mask_init(struct lp_exec_mask *mask, struct lp_build_context *bld)
@@ -763,7 +764,7 @@ emit_fetch_temporary(
    else {
       LLVMValueRef temp_ptr;
       if (stype != TGSI_TYPE_FLOAT && stype != TGSI_TYPE_UNTYPED) {
-         LLVMTypeRef itype = LLVMPointerType(LLVMVectorType(LLVMInt32TypeInContext(gallivm->context), 4), 0);
+         LLVMTypeRef itype = LLVMPointerType(bld->bld_base.int_bld.vec_type, 0);
          LLVMValueRef tint_ptr = lp_get_temp_ptr_soa(bld, reg->Register.Index,
                                                      swizzle);
          temp_ptr = LLVMBuildBitCast(builder, tint_ptr, itype, "");
@@ -786,18 +787,42 @@ emit_fetch_system_value(
 {
    struct lp_build_tgsi_soa_context * bld = lp_soa_context(bld_base);
    struct gallivm_state *gallivm = bld->bld_base.base.gallivm;
+   const struct tgsi_shader_info *info = bld->bld_base.info;
    LLVMBuilderRef builder = gallivm->builder;
-   LLVMValueRef index;  /* index into the system value array */
-   LLVMValueRef scalar, scalar_ptr;
+   LLVMValueRef res;
+   enum tgsi_opcode_type atype; // Actual type of the value
 
    assert(!reg->Register.Indirect);
 
-   index = lp_build_const_int32(gallivm, reg->Register.Index * 4 + swizzle);
+   switch (info->system_value_semantic_name[reg->Register.Index]) {
+   case TGSI_SEMANTIC_INSTANCEID:
+      res = lp_build_broadcast_scalar(&bld_base->uint_bld, bld->system_values.instance_id);
+      atype = TGSI_TYPE_UNSIGNED;
+      break;
 
-   scalar_ptr = LLVMBuildGEP(builder, bld->system_values_array, &index, 1, "");
-   scalar = LLVMBuildLoad(builder, scalar_ptr, "");
+   case TGSI_SEMANTIC_VERTEXID:
+      res = bld->system_values.vertex_id;
+      atype = TGSI_TYPE_UNSIGNED;
+      break;
 
-   return lp_build_broadcast_scalar(&bld->bld_base.base, scalar);
+   default:
+      assert(!"unexpected semantic in emit_fetch_system_value");
+      res = bld_base->base.zero;
+      atype = TGSI_TYPE_FLOAT;
+      break;
+   }
+
+   if (atype != stype) {
+      if (stype == TGSI_TYPE_FLOAT) {
+         res = LLVMBuildBitCast(builder, res, bld_base->base.vec_type, "");
+      } else if (stype == TGSI_TYPE_UNSIGNED) {
+         res = LLVMBuildBitCast(builder, res, bld_base->uint_bld.vec_type, "");
+      } else if (stype == TGSI_TYPE_SIGNED) {
+         res = LLVMBuildBitCast(builder, res, bld_base->int_bld.vec_type, "");
+      }
+   }
+
+   return res;
 }
 
 /**
@@ -1044,7 +1069,7 @@ emit_store_chan(
          switch (dtype) {
          case TGSI_TYPE_UNSIGNED:
          case TGSI_TYPE_SIGNED: {
-            LLVMTypeRef itype = LLVMVectorType(LLVMInt32TypeInContext(gallivm->context), 4);
+            LLVMTypeRef itype = bld_base->int_bld.vec_type;
             LLVMTypeRef ivtype = LLVMPointerType(itype, 0);
             LLVMValueRef tint_ptr = lp_get_temp_ptr_soa(bld, reg->Register.Index,
                                                         chan_index);
@@ -1117,13 +1142,14 @@ emit_tex( struct lp_build_tgsi_soa_context *bld,
           LLVMValueRef *texel)
 {
    LLVMBuilderRef builder = bld->bld_base.base.gallivm->builder;
+   struct gallivm_state *gallivm = bld->bld_base.base.gallivm;
    unsigned unit;
    LLVMValueRef lod_bias, explicit_lod;
    LLVMValueRef oow = NULL;
    LLVMValueRef coords[3];
-   LLVMValueRef ddx[3];
-   LLVMValueRef ddy[3];
+   struct lp_derivatives derivs;
    unsigned num_coords;
+   unsigned dims;
    unsigned i;
 
    if (!bld->sampler) {
@@ -1134,26 +1160,42 @@ emit_tex( struct lp_build_tgsi_soa_context *bld,
       return;
    }
 
+   derivs.ddx_ddy[0] = bld->bld_base.base.undef;
+   derivs.ddx_ddy[1] = bld->bld_base.base.undef;
+
    switch (inst->Texture.Texture) {
    case TGSI_TEXTURE_1D:
       num_coords = 1;
+      dims = 1;
       break;
    case TGSI_TEXTURE_1D_ARRAY:
+      num_coords = 2;
+      dims = 1;
+      break;
    case TGSI_TEXTURE_2D:
    case TGSI_TEXTURE_RECT:
       num_coords = 2;
+      dims = 2;
       break;
    case TGSI_TEXTURE_SHADOW1D:
    case TGSI_TEXTURE_SHADOW1D_ARRAY:
+      num_coords = 3;
+      dims = 1;
+      break;
    case TGSI_TEXTURE_SHADOW2D:
    case TGSI_TEXTURE_SHADOWRECT:
    case TGSI_TEXTURE_2D_ARRAY:
-   case TGSI_TEXTURE_3D:
    case TGSI_TEXTURE_CUBE:
       num_coords = 3;
+      dims = 2;
+      break;
+   case TGSI_TEXTURE_3D:
+      num_coords = 3;
+      dims = 3;
       break;
    case TGSI_TEXTURE_SHADOW2D_ARRAY:
       num_coords = 4;
+      dims = 2;
       break;
    default:
       assert(0);
@@ -1188,31 +1230,66 @@ emit_tex( struct lp_build_tgsi_soa_context *bld,
    }
 
    if (modifier == LP_BLD_TEX_MODIFIER_EXPLICIT_DERIV) {
-      LLVMValueRef index0 = lp_build_const_int32(bld->bld_base.base.gallivm, 0);
-      for (i = 0; i < num_coords; i++) {
-         LLVMValueRef src1 = lp_build_emit_fetch( &bld->bld_base, inst, 1, i );
-         LLVMValueRef src2 = lp_build_emit_fetch( &bld->bld_base, inst, 2, i );
-         ddx[i] = LLVMBuildExtractElement(builder, src1, index0, "");
-         ddy[i] = LLVMBuildExtractElement(builder, src2, index0, "");
+      LLVMValueRef i32undef = LLVMGetUndef(LLVMInt32TypeInContext(gallivm->context));
+      LLVMValueRef shuffles[LP_MAX_VECTOR_LENGTH];
+      LLVMValueRef ddxdyonec[3];
+      unsigned length = bld->bld_base.base.type.length;
+      unsigned num_quads = length / 4;
+      unsigned dim;
+      unsigned quad;
+
+      for (dim = 0; dim < dims; ++dim) {
+         LLVMValueRef srcx = lp_build_emit_fetch( &bld->bld_base, inst, 1, dim );
+         LLVMValueRef srcy = lp_build_emit_fetch( &bld->bld_base, inst, 2, dim );
+         for (quad = 0; quad < num_quads; ++quad) {
+            unsigned s1 = 4*quad;
+            unsigned s2 = 4*quad + length;
+            shuffles[4*quad + 0] = lp_build_const_int32(gallivm, s1);
+            shuffles[4*quad + 1] = lp_build_const_int32(gallivm, s2);
+            shuffles[4*quad + 2] = i32undef;
+            shuffles[4*quad + 3] = i32undef;
+         }
+         ddxdyonec[dim] = LLVMBuildShuffleVector(builder, srcx, srcy,
+                                               LLVMConstVector(shuffles, length), "");
+      }
+      if (dims == 1) {
+         derivs.ddx_ddy[0] = ddxdyonec[0];
+      }
+      else if (dims >= 2) {
+         for (quad = 0; quad < num_quads; ++quad) {
+            unsigned s1 = 4*quad;
+            unsigned s2 = 4*quad + length;
+            shuffles[4*quad + 0] = lp_build_const_int32(gallivm, s1);
+            shuffles[4*quad + 1] = lp_build_const_int32(gallivm, s1 + 1);
+            shuffles[4*quad + 2] = lp_build_const_int32(gallivm, s2);
+            shuffles[4*quad + 3] = lp_build_const_int32(gallivm, s2 + 1);
+         }
+         derivs.ddx_ddy[0] = LLVMBuildShuffleVector(builder, ddxdyonec[0], ddxdyonec[1],
+                                                  LLVMConstVector(shuffles, length), "");
+         if (dims == 3) {
+            derivs.ddx_ddy[1] = ddxdyonec[2];
+         }
       }
       unit = inst->Src[3].Register.Index;
    }  else {
-      for (i = 0; i < num_coords; i++) {
-         ddx[i] = lp_build_scalar_ddx( &bld->bld_base.base, coords[i] );
-         ddy[i] = lp_build_scalar_ddy( &bld->bld_base.base, coords[i] );
+      if (dims == 1) {
+         derivs.ddx_ddy[0] = lp_build_packed_ddx_ddy_onecoord(&bld->bld_base.base, coords[0]);
+      }
+      else if (dims >= 2) {
+         derivs.ddx_ddy[0] = lp_build_packed_ddx_ddy_twocoord(&bld->bld_base.base,
+                                                            coords[0], coords[1]);
+         if (dims == 3) {
+            derivs.ddx_ddy[1] = lp_build_packed_ddx_ddy_onecoord(&bld->bld_base.base, coords[2]);
+         }
       }
       unit = inst->Src[1].Register.Index;
-   }
-   for (i = num_coords; i < 3; i++) {
-      ddx[i] = LLVMGetUndef(bld->bld_base.base.elem_type);
-      ddy[i] = LLVMGetUndef(bld->bld_base.base.elem_type);
    }
 
    bld->sampler->emit_fetch_texel(bld->sampler,
                                   bld->bld_base.base.gallivm,
                                   bld->bld_base.base.type,
                                   unit, num_coords, coords,
-                                  ddx, ddy,
+                                  &derivs,
                                   lod_bias, explicit_lod,
                                   texel);
 }
@@ -1286,6 +1363,7 @@ emit_txq( struct lp_build_tgsi_soa_context *bld,
 
    bld->sampler->emit_size_query(bld->sampler,
                                  bld->bld_base.base.gallivm,
+                                 bld->bld_base.int_bld.type,
                                  inst->Src[1].Register.Index,
                                  explicit_lod,
                                  sizes_out);
@@ -1976,7 +2054,7 @@ lp_build_tgsi_soa(struct gallivm_state *gallivm,
                   struct lp_type type,
                   struct lp_build_mask_context *mask,
                   LLVMValueRef consts_ptr,
-                  LLVMValueRef system_values_array,
+                  const struct lp_bld_tgsi_system_values *system_values,
                   const LLVMValueRef *pos,
                   const LLVMValueRef (*inputs)[TGSI_NUM_CHANNELS],
                   LLVMValueRef (*outputs)[TGSI_NUM_CHANNELS],
@@ -2051,8 +2129,7 @@ lp_build_tgsi_soa(struct gallivm_state *gallivm,
 
    lp_exec_mask_init(&bld.exec_mask, &bld.bld_base.base);
 
-
-   bld.system_values_array = system_values_array;
+   bld.system_values = *system_values;
 
    lp_build_tgsi_llvm(&bld.bld_base, tokens);
 
@@ -2071,56 +2148,4 @@ lp_build_tgsi_soa(struct gallivm_state *gallivm,
       LLVMDumpModule(module);
 
    }
-}
-
-
-/**
- * Build up the system values array out of individual values such as
- * the instance ID, front-face, primitive ID, etc.  The shader info is
- * used to determine which system values are needed and where to put
- * them in the system values array.
- *
- * XXX only instance ID is implemented at this time.
- *
- * The system values register file is similar to the constants buffer.
- * Example declaration:
- *    DCL SV[0], INSTANCEID
- * Example instruction:
- *    MOVE foo, SV[0].xxxx;
- *
- * \return  LLVM float array (interpreted as float [][4])
- */
-LLVMValueRef
-lp_build_system_values_array(struct gallivm_state *gallivm,
-                             const struct tgsi_shader_info *info,
-                             LLVMValueRef instance_id,
-                             LLVMValueRef facing)
-{
-   LLVMValueRef size = lp_build_const_int32(gallivm, 4 * info->num_system_values);
-   LLVMTypeRef float_t = LLVMFloatTypeInContext(gallivm->context);
-   LLVMValueRef array = lp_build_array_alloca(gallivm, float_t,
-                                              size, "sysvals_array");
-   unsigned i;
-
-   for (i = 0; i < info->num_system_values; i++) {
-      LLVMValueRef index = lp_build_const_int32(gallivm, i * 4);
-      LLVMValueRef ptr, value = 0;
-
-      switch (info->system_value_semantic_name[i]) {
-      case TGSI_SEMANTIC_INSTANCEID:
-         /* convert instance ID from int to float */
-         value = LLVMBuildSIToFP(gallivm->builder, instance_id, float_t,
-                                 "sysval_instanceid");
-         break;
-      case TGSI_SEMANTIC_FACE:
-         /* fall-through */
-      default:
-         assert(0 && "unexpected semantic in build_system_values_array()");
-      }
-
-      ptr = LLVMBuildGEP(gallivm->builder, array, &index, 1, "");
-      LLVMBuildStore(gallivm->builder, value, ptr);
-   }
-      
-   return array;
 }

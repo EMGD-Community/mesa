@@ -80,6 +80,7 @@ main_sources = [
     'main/framebuffer.c',
     'main/get.c',
     'main/getstring.c',
+    'main/glformats.c',
     'main/hash.c',
     'main/hint.c',
     'main/histogram.c',
@@ -229,6 +230,7 @@ vbo_sources = [
 
 statetracker_sources = [
     'state_tracker/st_atom.c',
+    'state_tracker/st_atom_array.c',
     'state_tracker/st_atom_blend.c',
     'state_tracker/st_atom_clip.c',
     'state_tracker/st_atom_constbuf.c',
@@ -429,7 +431,7 @@ if env['gcc'] and env['platform'] not in ('darwin', 'windows'):
     elif env['machine'] == 'sparc':
         mesa_sources += [
             'sparc/sparc.c',
-            'sparc/clip.S',
+            'sparc/sparc_clip.S',
             'sparc/norm.S',
             'sparc/xform.S',
         ]

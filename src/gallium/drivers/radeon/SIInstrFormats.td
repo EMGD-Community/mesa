@@ -41,6 +41,9 @@ class SOP2_32 <bits<7> op, string opName, list<dag> pattern>
 class SOP2_64 <bits<7> op, string opName, list<dag> pattern>
   : SOP2 <op, (outs SReg_64:$dst), (ins SReg_64:$src0, SReg_64:$src1), opName, pattern>;
 
+class SOP2_VCC <bits<7> op, string opName, list<dag> pattern>
+  : SOP2 <op, (outs VCCReg:$vcc), (ins SReg_64:$src0, SReg_64:$src1), opName, pattern>;
+
 class VOP1_Helper <bits<8> op, RegisterClass vrc, RegisterClass arc,
                    string opName, list<dag> pattern> : 
   VOP1 <
@@ -97,7 +100,7 @@ class SOPK_64 <bits<5> op, string opName, list<dag> pattern>
 class VOPC_Helper <bits<8> op, RegisterClass vrc, RegisterClass arc,
                  string opName, list<dag> pattern> :
   VOPC <
-    op, (outs), (ins arc:$src0, vrc:$src1), opName, pattern
+    op, (ins arc:$src0, vrc:$src1), opName, pattern
   >;
 
 multiclass VOPC_32 <bits<8> op, string opName, list<dag> pattern> {
@@ -121,8 +124,8 @@ multiclass VOPC_64 <bits<8> op, string opName, list<dag> pattern> {
 }
 
 class SOPC_32 <bits<7> op, string opName, list<dag> pattern>
-  : SOPC <op, (outs CCReg:$dst), (ins SReg_32:$src0, SReg_32:$src1), opName, pattern>;
+  : SOPC <op, (outs SCCReg:$dst), (ins SReg_32:$src0, SReg_32:$src1), opName, pattern>;
 
 class SOPC_64 <bits<7> op, string opName, list<dag> pattern>
-  : SOPC <op, (outs CCReg:$dst), (ins SReg_64:$src0, SReg_64:$src1), opName, pattern>;
+  : SOPC <op, (outs SCCReg:$dst), (ins SReg_64:$src0, SReg_64:$src1), opName, pattern>;
 

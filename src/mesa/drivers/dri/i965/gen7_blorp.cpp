@@ -150,10 +150,6 @@ gen7_blorp_emit_surface_state(struct brw_context *brw,
    }
    struct intel_region *region = surface->mt->region;
 
-   /* TODO: handle other formats */
-   uint32_t format = surface->map_stencil_as_y_tiled
-      ? BRW_SURFACEFORMAT_R8_UNORM : BRW_SURFACEFORMAT_B8G8R8A8_UNORM;
-
    struct gen7_surface_state *surf = (struct gen7_surface_state *)
       brw_state_batch(brw, AUB_TRACE_SURFACE_STATE, sizeof(*surf), 32,
                       &wm_surf_offset);
@@ -164,7 +160,7 @@ gen7_blorp_emit_surface_state(struct brw_context *brw,
    if (surface->mt->align_w == 8)
       surf->ss0.horizontal_alignment = 1;
 
-   surf->ss0.surface_format = format;
+   surf->ss0.surface_format = surface->brw_surfaceformat;
    surf->ss0.surface_type = BRW_SURFACE_2D;
    surf->ss0.surface_array_spacing = surface->array_spacing_lod0 ?
       GEN7_SURFACE_ARYSPC_LOD0 : GEN7_SURFACE_ARYSPC_FULL;
@@ -184,13 +180,17 @@ gen7_blorp_emit_surface_state(struct brw_context *brw,
       pitch_bytes *= 2;
    surf->ss3.pitch = pitch_bytes - 1;
 
-   gen7_set_surface_num_multisamples(surf, surface->num_samples);
+   gen7_set_surface_msaa(surf, surface->num_samples, surface->msaa_layout);
+   if (surface->msaa_layout == INTEL_MSAA_LAYOUT_CMS) {
+      gen7_set_surface_mcs_info(brw, surf, wm_surf_offset,
+                                surface->mt->mcs_mt, is_render_target);
+   }
 
    if (intel->is_haswell) {
-      surf->ss7.shader_chanel_select_r = HSW_SCS_RED;
-      surf->ss7.shader_chanel_select_g = HSW_SCS_GREEN;
-      surf->ss7.shader_chanel_select_b = HSW_SCS_BLUE;
-      surf->ss7.shader_chanel_select_a = HSW_SCS_ALPHA;
+      surf->ss7.shader_channel_select_r = HSW_SCS_RED;
+      surf->ss7.shader_channel_select_g = HSW_SCS_GREEN;
+      surf->ss7.shader_channel_select_b = HSW_SCS_BLUE;
+      surf->ss7.shader_channel_select_a = HSW_SCS_ALPHA;
    }
 
    /* Emit relocation to surface contents */
@@ -373,7 +373,7 @@ gen7_blorp_emit_sf_config(struct brw_context *brw,
       OUT_BATCH(_3DSTATE_SF << 16 | (7 - 2));
       OUT_BATCH(params->depth_format <<
                 GEN7_SF_DEPTH_BUFFER_SURFACE_FORMAT_SHIFT);
-      OUT_BATCH(params->num_samples > 0 ? GEN6_SF_MSRAST_ON_PATTERN : 0);
+      OUT_BATCH(params->num_samples > 1 ? GEN6_SF_MSRAST_ON_PATTERN : 0);
       OUT_BATCH(0);
       OUT_BATCH(0);
       OUT_BATCH(0);
@@ -432,7 +432,7 @@ gen7_blorp_emit_wm_config(struct brw_context *brw,
       dw1 |= GEN7_WM_DISPATCH_ENABLE; /* We are rendering */
    }
 
-      if (params->num_samples > 0) {
+      if (params->num_samples > 1) {
          dw1 |= GEN7_WM_MSRAST_ON_PATTERN;
          if (prog_data && prog_data->persample_msaa_dispatch)
             dw2 |= GEN7_WM_MSDISPMODE_PERSAMPLE;
@@ -737,7 +737,7 @@ gen7_blorp_exec(struct intel_context *intel,
    gen6_blorp_emit_batch_head(brw, params);
    gen7_allocate_push_constants(brw);
    gen6_emit_3dstate_multisample(brw, params->num_samples);
-   gen6_emit_3dstate_sample_mask(brw, params->num_samples);
+   gen6_emit_3dstate_sample_mask(brw, params->num_samples, 1.0, false);
    gen6_blorp_emit_state_base_address(brw, params);
    gen6_blorp_emit_vertices(brw, params);
    gen7_blorp_emit_urb_config(brw, params);

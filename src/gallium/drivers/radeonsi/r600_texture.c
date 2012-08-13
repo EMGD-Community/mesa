@@ -456,7 +456,7 @@ static boolean r600_texture_get_handle(struct pipe_screen* screen,
 					struct winsys_handle *whandle)
 {
 	struct r600_resource_texture *rtex = (struct r600_resource_texture*)ptex;
-	struct r600_resource *resource = &rtex->resource;
+	struct si_resource *resource = &rtex->resource;
 	struct radeon_surface *surface = &rtex->surface;
 	struct r600_screen *rscreen = (struct r600_screen*)screen;
 
@@ -480,13 +480,10 @@ static void r600_texture_destroy(struct pipe_screen *screen,
 				 struct pipe_resource *ptex)
 {
 	struct r600_resource_texture *rtex = (struct r600_resource_texture*)ptex;
-	struct r600_resource *resource = &rtex->resource;
+	struct si_resource *resource = &rtex->resource;
 
 	if (rtex->flushed_depth_texture)
-		pipe_resource_reference((struct pipe_resource **)&rtex->flushed_depth_texture, NULL);
-
-	if (rtex->stencil)
-		pipe_resource_reference((struct pipe_resource **)&rtex->stencil, NULL);
+		si_resource_reference(&rtex->flushed_depth_texture, NULL);
 
 	pb_reference(&resource->buf, NULL);
 	FREE(rtex);
@@ -515,7 +512,7 @@ r600_texture_create_object(struct pipe_screen *screen,
 			   struct radeon_surface *surface)
 {
 	struct r600_resource_texture *rtex;
-	struct r600_resource *resource;
+	struct si_resource *resource;
 	struct r600_screen *rscreen = (struct r600_screen*)screen;
 	int r;
 
@@ -543,19 +540,6 @@ r600_texture_create_object(struct pipe_screen *screen,
 		return NULL;
 	}
 
-	/* If we initialized separate stencil for Evergreen. place it after depth. */
-	if (rtex->stencil) {
-		unsigned stencil_align, stencil_offset;
-
-		stencil_align = r600_get_base_alignment(screen, rtex->stencil->real_format, array_mode);
-		stencil_offset = align(rtex->size, stencil_align);
-
-		for (unsigned i = 0; i <= rtex->stencil->resource.b.b.last_level; i++)
-			rtex->stencil->offset[i] += stencil_offset;
-
-		rtex->size = stencil_offset + rtex->stencil->size;
-	}
-
 	/* Now create the backing buffer. */
 	if (!buf && alloc_bo) {
 		struct pipe_resource *ptex = &rtex->resource.b.b;
@@ -563,7 +547,6 @@ r600_texture_create_object(struct pipe_screen *screen,
 
 		base_align = rtex->surface.bo_alignment;
 		if (!r600_init_resource(rscreen, resource, rtex->size, base_align, base->bind, base->usage)) {
-			pipe_resource_reference((struct pipe_resource**)&rtex->stencil, NULL);
 			FREE(rtex);
 			return NULL;
 		}
@@ -573,11 +556,6 @@ r600_texture_create_object(struct pipe_screen *screen,
 		resource->domains = RADEON_DOMAIN_GTT | RADEON_DOMAIN_VRAM;
 	}
 
-	if (rtex->stencil) {
-		pb_reference(&rtex->stencil->resource.buf, rtex->resource.buf);
-		rtex->stencil->resource.cs_buf = rtex->resource.cs_buf;
-		rtex->stencil->resource.domains = rtex->resource.domains;
-	}
 	return rtex;
 }
 
@@ -589,12 +567,14 @@ struct pipe_resource *r600_texture_create(struct pipe_screen *screen,
 	unsigned array_mode = 0;
 	int r;
 
+#if 0
 	if (!(templ->flags & R600_RESOURCE_FLAG_TRANSFER) &&
 	    !(templ->bind & PIPE_BIND_SCANOUT)) {
 		if (permit_hardware_blit(screen, templ)) {
 			array_mode = V_009910_ARRAY_2D_TILED_THIN1;
 		}
 	}
+#endif
 
 	r = r600_init_surface(&surface, templ, array_mode);
 	if (r) {
@@ -877,14 +857,14 @@ void* r600_texture_transfer_map(struct pipe_context *ctx,
 	char *map;
 
 	if (rtransfer->staging_texture) {
-		buf = ((struct r600_resource *)rtransfer->staging_texture)->cs_buf;
+		buf = si_resource(rtransfer->staging_texture)->cs_buf;
 	} else {
 		struct r600_resource_texture *rtex = (struct r600_resource_texture*)transfer->resource;
 
 		if (rtex->flushed_depth_texture)
-			buf = ((struct r600_resource *)rtex->flushed_depth_texture)->cs_buf;
+			buf = si_resource(rtex->flushed_depth_texture)->cs_buf;
 		else
-			buf = ((struct r600_resource *)transfer->resource)->cs_buf;
+			buf = si_resource(transfer->resource)->cs_buf;
 
 		offset = rtransfer->offset +
 			transfer->box.y / util_format_get_blockheight(format) * transfer->stride +
@@ -906,14 +886,14 @@ void r600_texture_transfer_unmap(struct pipe_context *ctx,
 	struct radeon_winsys_cs_handle *buf;
 
 	if (rtransfer->staging_texture) {
-		buf = ((struct r600_resource *)rtransfer->staging_texture)->cs_buf;
+		buf = si_resource(rtransfer->staging_texture)->cs_buf;
 	} else {
 		struct r600_resource_texture *rtex = (struct r600_resource_texture*)transfer->resource;
 
 		if (rtex->flushed_depth_texture) {
-			buf = ((struct r600_resource *)rtex->flushed_depth_texture)->cs_buf;
+			buf = si_resource(rtex->flushed_depth_texture)->cs_buf;
 		} else {
-			buf = ((struct r600_resource *)transfer->resource)->cs_buf;
+			buf = si_resource(transfer->resource)->cs_buf;
 		}
 	}
 	rctx->ws->buffer_unmap(buf);

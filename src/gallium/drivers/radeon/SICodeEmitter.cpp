@@ -14,15 +14,17 @@
 
 
 #include "AMDGPU.h"
+#include "AMDGPUCodeEmitter.h"
 #include "AMDGPUUtil.h"
-#include "AMDILCodeEmitter.h"
 #include "SIInstrInfo.h"
 #include "SIMachineFunctionInfo.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Target/TargetMachine.h"
 
+#include <map>
 #include <stdio.h>
 
 #define LITERAL_REG 255
@@ -31,13 +33,21 @@ using namespace llvm;
 
 namespace {
 
-  class SICodeEmitter : public MachineFunctionPass, public AMDILCodeEmitter {
+  class SICodeEmitter : public MachineFunctionPass, public AMDGPUCodeEmitter {
 
   private:
     static char ID;
     formatted_raw_ostream &_OS;
     const TargetMachine *TM;
-    void emitState(MachineFunction & MF);
+
+    //Program Info
+    unsigned MaxSGPR;
+    unsigned MaxVGPR;
+    unsigned CurrentInstrIndex;
+    std::map<int, unsigned> BBIndexes;
+
+    void InitProgramInfo(MachineFunction &MF);
+    void EmitState(MachineFunction & MF);
     void emitInstr(MachineInstr &MI);
 
     void outputBytes(uint64_t value, unsigned bytes);
@@ -46,7 +56,7 @@ namespace {
 
   public:
     SICodeEmitter(formatted_raw_ostream &OS) : MachineFunctionPass(ID),
-        _OS(OS), TM(NULL) { }
+        _OS(OS), TM(NULL), MaxSGPR(0), MaxVGPR(0), CurrentInstrIndex(0) { }
     const char *getPassName() const { return "SI Code Emitter"; }
     bool runOnMachineFunction(MachineFunction &MF);
 
@@ -81,21 +91,28 @@ FunctionPass *llvm::createSICodeEmitterPass(formatted_raw_ostream &OS) {
   return new SICodeEmitter(OS);
 }
 
-void SICodeEmitter::emitState(MachineFunction & MF)
-{
-  unsigned maxSGPR = 0;
-  unsigned maxVGPR = 0;
+void SICodeEmitter::EmitState(MachineFunction & MF) {
+  SIMachineFunctionInfo * MFI = MF.getInfo<SIMachineFunctionInfo>();
+  outputBytes(MaxSGPR + 1, 4);
+  outputBytes(MaxVGPR + 1, 4);
+  outputBytes(MFI->spi_ps_input_addr, 4);
+}
+
+void SICodeEmitter::InitProgramInfo(MachineFunction &MF) {
+  unsigned InstrIndex = 0;
   bool VCCUsed = false;
   const SIRegisterInfo * RI =
                 static_cast<const SIRegisterInfo*>(TM->getRegisterInfo());
-  SIMachineFunctionInfo * MFI = MF.getInfo<SIMachineFunctionInfo>();
 
   for (MachineFunction::iterator BB = MF.begin(), BB_E = MF.end();
                                                   BB != BB_E; ++BB) {
     MachineBasicBlock &MBB = *BB;
+    BBIndexes[MBB.getNumber()] = InstrIndex;
+    InstrIndex += MBB.size();
     for (MachineBasicBlock::iterator I = MBB.begin(), E = MBB.end();
-                                                      I != E; ++I) {
+                                                    I != E; ++I) {
       MachineInstr &MI = *I;
+
       unsigned numOperands = MI.getNumOperands();
       for (unsigned op_idx = 0; op_idx < numOperands; op_idx++) {
         MachineOperand & MO = MI.getOperand(op_idx);
@@ -108,58 +125,61 @@ void SICodeEmitter::emitState(MachineFunction & MF)
           continue;
         }
         reg = MO.getReg();
-        if (reg == AMDIL::VCC) {
+        if (reg == AMDGPU::VCC) {
           VCCUsed = true;
           continue;
         }
-        if (AMDIL::SReg_32RegClass.contains(reg)) {
+        if (AMDGPU::SReg_32RegClass.contains(reg)) {
           isSGPR = true;
           width = 1;
-        } else if (AMDIL::VReg_32RegClass.contains(reg)) {
+        } else if (AMDGPU::VReg_32RegClass.contains(reg)) {
           isSGPR = false;
           width = 1;
-        } else if (AMDIL::SReg_64RegClass.contains(reg)) {
+        } else if (AMDGPU::SReg_64RegClass.contains(reg)) {
           isSGPR = true;
           width = 2;
-        } else if (AMDIL::VReg_64RegClass.contains(reg)) {
+        } else if (AMDGPU::VReg_64RegClass.contains(reg)) {
           isSGPR = false;
           width = 2;
-        } else if (AMDIL::SReg_128RegClass.contains(reg)) {
+        } else if (AMDGPU::SReg_128RegClass.contains(reg)) {
           isSGPR = true;
           width = 4;
-        } else if (AMDIL::VReg_128RegClass.contains(reg)) {
+        } else if (AMDGPU::VReg_128RegClass.contains(reg)) {
           isSGPR = false;
           width = 4;
-        } else if (AMDIL::SReg_256RegClass.contains(reg)) {
+        } else if (AMDGPU::SReg_256RegClass.contains(reg)) {
           isSGPR = true;
           width = 8;
         } else {
           assert("!Unknown register class");
         }
         hwReg = RI->getHWRegNum(reg);
-        maxUsed = ((hwReg + 1) * width) - 1;
+        maxUsed = hwReg + width - 1;
         if (isSGPR) {
-          maxSGPR = maxUsed > maxSGPR ? maxUsed : maxSGPR;
+          MaxSGPR = maxUsed > MaxSGPR ? maxUsed : MaxSGPR;
         } else {
-          maxVGPR = maxUsed > maxVGPR ? maxUsed : maxVGPR;
+          MaxVGPR = maxUsed > MaxVGPR ? maxUsed : MaxVGPR;
         }
       }
     }
   }
   if (VCCUsed) {
-    maxSGPR += 2;
+    MaxSGPR += 2;
   }
-  outputBytes(maxSGPR + 1, 4);
-  outputBytes(maxVGPR + 1, 4);
-  outputBytes(MFI->spi_ps_input_addr, 4);
 }
 
 bool SICodeEmitter::runOnMachineFunction(MachineFunction &MF)
 {
-  MF.dump();
   TM = &MF.getTarget();
+  const AMDGPUSubtarget &STM = TM->getSubtarget<AMDGPUSubtarget>();
 
-  emitState(MF);
+  if (STM.dumpCode()) {
+    MF.dump();
+  }
+
+  InitProgramInfo(MF);
+
+  EmitState(MF);
 
   for (MachineFunction::iterator BB = MF.begin(), BB_E = MF.end();
                                                   BB != BB_E; ++BB) {
@@ -167,14 +187,15 @@ bool SICodeEmitter::runOnMachineFunction(MachineFunction &MF)
     for (MachineBasicBlock::iterator I = MBB.begin(), E = MBB.end();
                                                       I != E; ++I) {
       MachineInstr &MI = *I;
-      if (MI.getOpcode() != AMDIL::KILL && MI.getOpcode() != AMDIL::RETURN) {
+      if (MI.getOpcode() != AMDGPU::KILL && MI.getOpcode() != AMDGPU::RETURN) {
         emitInstr(MI);
+        CurrentInstrIndex++;
       }
     }
   }
   // Emit S_END_PGM
   MachineInstr * End = BuildMI(MF, DebugLoc(),
-                               TM->getInstrInfo()->get(AMDIL::S_ENDPGM));
+                               TM->getInstrInfo()->get(AMDGPU::S_ENDPGM));
   emitInstr(*End);
   return false;
 }
@@ -211,7 +232,11 @@ uint64_t SICodeEmitter::getMachineOpValue(const MachineInstr &MI,
   case MachineOperand::MO_FPImmediate:
     // XXX: Not all instructions can use inline literals
     // XXX: We should make sure this is a 32-bit constant
-    return LITERAL_REG | (MO.getFPImm()->getValueAPF().bitcastToAPInt().getZExtValue() << 32);
+    return LITERAL_REG;
+
+  case MachineOperand::MO_MachineBasicBlock:
+    return (*BBIndexes.find(MI.getParent()->getNumber())).second -
+           CurrentInstrIndex - 1;
   default:
     llvm_unreachable("Encoding of this operand type is not supported yet.");
     break;
@@ -296,13 +321,26 @@ uint64_t SICodeEmitter::VOPPostEncode(const MachineInstr &MI,
 
   // Add one to skip over the destination reg operand.
   for (unsigned opIdx = 1; opIdx < numSrcOps + 1; opIdx++) {
-    if (!MI.getOperand(opIdx).isReg()) {
+    const MachineOperand &MO = MI.getOperand(opIdx);
+    switch(MO.getType()) {
+    case MachineOperand::MO_Register:
+      {
+        unsigned reg = MI.getOperand(opIdx).getReg();
+        if (AMDGPU::VReg_32RegClass.contains(reg)
+            || AMDGPU::VReg_64RegClass.contains(reg)) {
+          Value |= (VGPR_BIT(opIdx)) << vgprBitOffset;
+        }
+      }
+      break;
+
+    case MachineOperand::MO_FPImmediate:
+      // XXX: Not all instructions can use inline literals
+      // XXX: We should make sure this is a 32-bit constant
+      Value |= (MO.getFPImm()->getValueAPF().bitcastToAPInt().getZExtValue() << 32);
       continue;
-    }
-    unsigned reg = MI.getOperand(opIdx).getReg();
-    if (AMDIL::VReg_32RegClass.contains(reg)
-        || AMDIL::VReg_64RegClass.contains(reg)) {
-      Value |= (VGPR_BIT(opIdx)) << vgprBitOffset;
+
+    default:
+      break;
     }
   }
   return Value;

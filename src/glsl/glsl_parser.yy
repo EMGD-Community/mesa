@@ -29,6 +29,7 @@
 #include "ast.h"
 #include "glsl_parser_extras.h"
 #include "glsl_types.h"
+#include "main/context.h"
 
 #define YYLEX_PARAM state->scanner
 
@@ -155,6 +156,7 @@ static void yyerror(YYLTYPE *loc, _mesa_glsl_parse_state *st, const char *msg)
 %type <type_qualifier> interpolation_qualifier
 %type <type_qualifier> layout_qualifier
 %type <type_qualifier> layout_qualifier_id_list layout_qualifier_id
+%type <type_qualifier> uniform_block_layout_qualifier
 %type <type_specifier> type_specifier
 %type <type_specifier> type_specifier_no_prec
 %type <type_specifier> type_specifier_nonarray
@@ -213,11 +215,14 @@ static void yyerror(YYLTYPE *loc, _mesa_glsl_parse_state *st, const char *msg)
 %type <node> declaration
 %type <node> declaration_statement
 %type <node> jump_statement
+%type <node> uniform_block
 %type <struct_specifier> struct_specifier
-%type <node> struct_declaration_list
+%type <declarator_list> struct_declaration_list
 %type <declarator_list> struct_declaration
 %type <declaration> struct_declarator
 %type <declaration> struct_declarator_list
+%type <declarator_list> member_list
+%type <declarator_list> member_declaration
 %type <node> selection_statement
 %type <selection_rest_statement> selection_rest_statement
 %type <node> switch_statement
@@ -255,19 +260,25 @@ version_statement:
 	   switch ($2) {
 	   case 100:
 	      state->es_shader = true;
-	      supported = state->Const.GLSL_100ES;
+	      supported = state->ctx->API == API_OPENGLES2 ||
+		          state->ctx->Extensions.ARB_ES2_compatibility;
 	      break;
 	   case 110:
-	      supported = state->Const.GLSL_110;
-	      break;
 	   case 120:
-	      supported = state->Const.GLSL_120;
-	      break;
+	      /* FINISHME: Once the OpenGL 3.0 'forward compatible' context or
+	       * the OpenGL 3.2 Core context is supported, this logic will need
+	       * change.  Older versions of GLSL are no longer supported
+	       * outside the compatibility contexts of 3.x.
+	       */
 	   case 130:
-	      supported = state->Const.GLSL_130;
-	      break;
 	   case 140:
-	      supported = state->Const.GLSL_140;
+	   case 150:
+	   case 330:
+	   case 400:
+	   case 410:
+	   case 420:
+	      supported = _mesa_is_desktop_gl(state->ctx) &&
+			  ((unsigned) $2) <= state->ctx->Const.GLSLVersion;
 	      break;
 	   default:
 	      supported = false;
@@ -287,6 +298,10 @@ version_statement:
 			       state->version_string,
 			       state->supported_version_string);
 	   }
+
+	   if (state->language_version >= 140) {
+	      state->ARB_uniform_buffer_object_enable = true;
+	   }
 	}
 	;
 
@@ -297,7 +312,7 @@ pragma_statement:
 	| PRAGMA_OPTIMIZE_OFF EOL
 	| PRAGMA_INVARIANT_ALL EOL
 	{
-	   if (state->language_version < 120) {
+	   if (state->language_version == 110) {
 	      _mesa_glsl_warning(& @1, state,
 				 "pragma `invariant(all)' not supported in %s",
 				 state->version_string);
@@ -800,6 +815,10 @@ declaration:
 	   $3->is_precision_statement = true;
 	   $$ = $3;
 	}
+	| uniform_block
+	{
+	   $$ = $1;
+	}
 	;
 
 function_prototype:
@@ -1094,46 +1113,27 @@ layout_qualifier_id_list:
 	layout_qualifier_id
 	| layout_qualifier_id_list ',' layout_qualifier_id
 	{
-	   if (($1.flags.i & $3.flags.i) != 0) {
-	      _mesa_glsl_error(& @3, state,
-			       "duplicate layout qualifiers used\n");
+	   $$ = $1;
+	   if (!$$.merge_qualifier(& @3, state, $3)) {
 	      YYERROR;
 	   }
-
-	   $$.flags.i = $1.flags.i | $3.flags.i;
-
-	   if ($1.flags.q.explicit_location)
-	      $$.location = $1.location;
-
-	   if ($1.flags.q.explicit_index)
-	      $$.index = $1.index;
-
-	   if ($3.flags.q.explicit_location)
-	      $$.location = $3.location;
-
-	   if ($3.flags.q.explicit_index)
-	      $$.index = $3.index;
 	}
 	;
 
 layout_qualifier_id:
 	any_identifier
 	{
-	   bool got_one = false;
-
 	   memset(& $$, 0, sizeof($$));
 
 	   /* Layout qualifiers for ARB_fragment_coord_conventions. */
-	   if (!got_one && state->ARB_fragment_coord_conventions_enable) {
+	   if (!$$.flags.i && state->ARB_fragment_coord_conventions_enable) {
 	      if (strcmp($1, "origin_upper_left") == 0) {
-		 got_one = true;
 		 $$.flags.q.origin_upper_left = 1;
 	      } else if (strcmp($1, "pixel_center_integer") == 0) {
-		 got_one = true;
 		 $$.flags.q.pixel_center_integer = 1;
 	      }
 
-	      if (got_one && state->ARB_fragment_coord_conventions_warn) {
+	      if ($$.flags.i && state->ARB_fragment_coord_conventions_warn) {
 		 _mesa_glsl_warning(& @1, state,
 				    "GL_ARB_fragment_coord_conventions layout "
 				    "identifier `%s' used\n", $1);
@@ -1141,36 +1141,49 @@ layout_qualifier_id:
 	   }
 
 	   /* Layout qualifiers for AMD/ARB_conservative_depth. */
-	   if (!got_one &&
+	   if (!$$.flags.i &&
 	       (state->AMD_conservative_depth_enable ||
 	        state->ARB_conservative_depth_enable)) {
 	      if (strcmp($1, "depth_any") == 0) {
-	         got_one = true;
 	         $$.flags.q.depth_any = 1;
 	      } else if (strcmp($1, "depth_greater") == 0) {
-	         got_one = true;
 	         $$.flags.q.depth_greater = 1;
 	      } else if (strcmp($1, "depth_less") == 0) {
-	         got_one = true;
 	         $$.flags.q.depth_less = 1;
 	      } else if (strcmp($1, "depth_unchanged") == 0) {
-	         got_one = true;
 	         $$.flags.q.depth_unchanged = 1;
 	      }
 	
-	      if (got_one && state->AMD_conservative_depth_warn) {
+	      if ($$.flags.i && state->AMD_conservative_depth_warn) {
 	         _mesa_glsl_warning(& @1, state,
 	                            "GL_AMD_conservative_depth "
 	                            "layout qualifier `%s' is used\n", $1);
 	      }
-	      if (got_one && state->ARB_conservative_depth_warn) {
+	      if ($$.flags.i && state->ARB_conservative_depth_warn) {
 	         _mesa_glsl_warning(& @1, state,
 	                            "GL_ARB_conservative_depth "
 	                            "layout qualifier `%s' is used\n", $1);
 	      }
 	   }
 
-	   if (!got_one) {
+	   /* See also uniform_block_layout_qualifier. */
+	   if (!$$.flags.i && state->ARB_uniform_buffer_object_enable) {
+	      if (strcmp($1, "std140") == 0) {
+	         $$.flags.q.std140 = 1;
+	      } else if (strcmp($1, "shared") == 0) {
+	         $$.flags.q.shared = 1;
+	      } else if (strcmp($1, "column_major") == 0) {
+	         $$.flags.q.column_major = 1;
+	      }
+
+	      if ($$.flags.i && state->ARB_uniform_buffer_object_warn) {
+	         _mesa_glsl_warning(& @1, state,
+	                            "#version 140 / GL_ARB_uniform_buffer_object "
+	                            "layout qualifier `%s' is used\n", $1);
+	      }
+	   }
+
+	   if (!$$.flags.i) {
 	      _mesa_glsl_error(& @1, state, "unrecognized layout identifier "
 			       "`%s'\n", $1);
 	      YYERROR;
@@ -1178,8 +1191,6 @@ layout_qualifier_id:
 	}
 	| any_identifier '=' INTCONSTANT
 	{
-	   bool got_one = false;
-
 	   memset(& $$, 0, sizeof($$));
 
 	   if (state->ARB_explicit_attrib_location_enable) {
@@ -1187,8 +1198,6 @@ layout_qualifier_id:
 	       * FINISHME: GLSL 1.30 (or later) are supported.
 	       */
 	      if (strcmp("location", $1) == 0) {
-		 got_one = true;
-
 		 $$.flags.q.explicit_location = 1;
 
 		 if ($3 >= 0) {
@@ -1201,8 +1210,6 @@ layout_qualifier_id:
 	      }
 
 	      if (strcmp("index", $1) == 0) {
-	      	 got_one = true;
-
 		 $$.flags.q.explicit_index = 1;
 
 		 if ($3 >= 0) {
@@ -1218,7 +1225,7 @@ layout_qualifier_id:
 	   /* If the identifier didn't match any known layout identifiers,
 	    * emit an error.
 	    */
-	   if (!got_one) {
+	   if (!$$.flags.i) {
 	      _mesa_glsl_error(& @1, state, "unrecognized layout identifier "
 			       "`%s'\n", $1);
 	      YYERROR;
@@ -1227,6 +1234,38 @@ layout_qualifier_id:
 				 "GL_ARB_explicit_attrib_location layout "
 				 "identifier `%s' used\n", $1);
 	   }
+	}
+	| uniform_block_layout_qualifier
+	{
+	   $$ = $1;
+	   /* Layout qualifiers for ARB_uniform_buffer_object. */
+	   if (!state->ARB_uniform_buffer_object_enable) {
+	      _mesa_glsl_error(& @1, state,
+			       "#version 140 / GL_ARB_uniform_buffer_object "
+			       "layout qualifier `%s' is used\n", $1);
+	   } else if (state->ARB_uniform_buffer_object_warn) {
+	      _mesa_glsl_warning(& @1, state,
+				 "#version 140 / GL_ARB_uniform_buffer_object "
+				 "layout qualifier `%s' is used\n", $1);
+	   }
+	}
+	;
+
+/* This is a separate language rule because we parse these as tokens
+ * (due to them being reserved keywords) instead of identifiers like
+ * most qualifiers.  See the any_identifier path of
+ * layout_qualifier_id for the others.
+ */
+uniform_block_layout_qualifier:
+	ROW_MAJOR
+	{
+	   memset(& $$, 0, sizeof($$));
+	   $$.flags.q.row_major = 1;
+	}
+	| PACKED_TOK
+	{
+	   memset(& $$, 0, sizeof($$));
+	   $$.flags.q.packed = 1;
 	}
 	;
 
@@ -1498,12 +1537,12 @@ struct_specifier:
 struct_declaration_list:
 	struct_declaration
 	{
-	   $$ = (ast_node *) $1;
+	   $$ = $1;
 	   $1->link.self_link();
 	}
 	| struct_declaration_list struct_declaration
 	{
-	   $$ = (ast_node *) $1;
+	   $$ = $1;
 	   $$->link.insert_before(& $2->link);
 	}
 	;
@@ -1867,6 +1906,7 @@ external_declaration:
 	function_definition	{ $$ = $1; }
 	| declaration		{ $$ = $1; }
 	| pragma_statement	{ $$ = NULL; }
+	| layout_defaults	{ $$ = NULL; }
 	;
 
 function_definition:
@@ -1881,3 +1921,103 @@ function_definition:
 	   state->symbols->pop_scope();
 	}
 	;
+
+/* layout_qualifieropt is packed into this rule */
+uniform_block:
+	UNIFORM NEW_IDENTIFIER '{' member_list '}' ';'
+	{
+	   void *ctx = state;
+	   $$ = new(ctx) ast_uniform_block(*state->default_uniform_qualifier,
+					   $2, $4);
+
+	   if (!state->ARB_uniform_buffer_object_enable) {
+	      _mesa_glsl_error(& @1, state,
+			       "#version 140 / GL_ARB_uniform_buffer_object "
+			       "required for defining uniform blocks\n");
+	   } else if (state->ARB_uniform_buffer_object_warn) {
+	      _mesa_glsl_warning(& @1, state,
+				 "#version 140 / GL_ARB_uniform_buffer_object "
+				 "required for defining uniform blocks\n");
+	   }
+	}
+	| layout_qualifier UNIFORM NEW_IDENTIFIER '{' member_list '}' ';'
+	{
+	   void *ctx = state;
+
+	   ast_type_qualifier qual = *state->default_uniform_qualifier;
+	   if (!qual.merge_qualifier(& @1, state, $1)) {
+	      YYERROR;
+	   }
+	   $$ = new(ctx) ast_uniform_block(qual, $3, $5);
+
+	   if (!state->ARB_uniform_buffer_object_enable) {
+	      _mesa_glsl_error(& @1, state,
+			       "#version 140 / GL_ARB_uniform_buffer_object "
+			       "required for defining uniform blocks\n");
+	   } else if (state->ARB_uniform_buffer_object_warn) {
+	      _mesa_glsl_warning(& @1, state,
+				 "#version 140 / GL_ARB_uniform_buffer_object "
+				 "required for defining uniform blocks\n");
+	   }
+	}
+	;
+
+member_list:
+	member_declaration
+	{
+	   $$ = $1;
+	   $1->link.self_link();
+	}
+	| member_declaration member_list
+	{
+	   $$ = $1;
+	   $2->link.insert_before(& $$->link);
+	}
+	;
+
+/* Specifying "uniform" inside of a uniform block is redundant. */
+uniformopt:
+	/* nothing */
+	| UNIFORM
+	;
+
+member_declaration:
+	layout_qualifier uniformopt type_specifier struct_declarator_list ';'
+	{
+	   void *ctx = state;
+	   ast_fully_specified_type *type = new(ctx) ast_fully_specified_type();
+	   type->set_location(yylloc);
+
+	   type->qualifier = $1;
+	   type->qualifier.flags.q.uniform = true;
+	   type->specifier = $3;
+	   $$ = new(ctx) ast_declarator_list(type);
+	   $$->set_location(yylloc);
+	   $$->ubo_qualifiers_valid = true;
+
+	   $$->declarations.push_degenerate_list_at_head(& $4->link);
+	}
+	| uniformopt type_specifier struct_declarator_list ';'
+	{
+	   void *ctx = state;
+	   ast_fully_specified_type *type = new(ctx) ast_fully_specified_type();
+	   type->set_location(yylloc);
+
+	   type->qualifier.flags.q.uniform = true;
+	   type->specifier = $2;
+	   $$ = new(ctx) ast_declarator_list(type);
+	   $$->set_location(yylloc);
+	   $$->ubo_qualifiers_valid = true;
+
+	   $$->declarations.push_degenerate_list_at_head(& $3->link);
+	}
+	;
+
+layout_defaults:
+	layout_qualifier UNIFORM ';'
+	{
+	   if (!state->default_uniform_qualifier->merge_qualifier(& @1, state,
+								  $1)) {
+	      YYERROR;
+	   }
+	}

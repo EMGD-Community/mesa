@@ -39,6 +39,8 @@
 extern "C" {
 #endif
 
+enum intel_msaa_layout;
+
 extern const struct brw_tracked_state brw_blend_constant_color;
 extern const struct brw_tracked_state brw_cc_vp;
 extern const struct brw_tracked_state brw_cc_unit;
@@ -69,6 +71,7 @@ extern const struct brw_tracked_state brw_state_base_address;
 extern const struct brw_tracked_state brw_urb_fence;
 extern const struct brw_tracked_state brw_vertex_state;
 extern const struct brw_tracked_state brw_vs_prog;
+extern const struct brw_tracked_state brw_vs_ubo_surfaces;
 extern const struct brw_tracked_state brw_vs_unit;
 extern const struct brw_tracked_state brw_wm_input_sizes;
 extern const struct brw_tracked_state brw_wm_prog;
@@ -76,6 +79,7 @@ extern const struct brw_tracked_state brw_renderbuffer_surfaces;
 extern const struct brw_tracked_state brw_texture_surfaces;
 extern const struct brw_tracked_state brw_wm_binding_table;
 extern const struct brw_tracked_state brw_vs_binding_table;
+extern const struct brw_tracked_state brw_wm_ubo_surfaces;
 extern const struct brw_tracked_state brw_wm_unit;
 
 extern const struct brw_tracked_state brw_psp_urb_cbs;
@@ -185,6 +189,7 @@ uint32_t brw_get_surface_tiling_bits(uint32_t tiling);
 uint32_t brw_get_surface_num_multisamples(unsigned num_samples);
 void brw_create_constant_surface(struct brw_context *brw,
 				 drm_intel_bo *bo,
+				 uint32_t offset,
 				 int width,
 				 uint32_t *out_offset);
 
@@ -199,13 +204,20 @@ GLuint translate_tex_format(gl_format mesa_format,
 
 /* gen7_wm_surface_state.c */
 void gen7_set_surface_tiling(struct gen7_surface_state *surf, uint32_t tiling);
-void gen7_set_surface_num_multisamples(struct gen7_surface_state *surf,
-                                       unsigned num_samples);
+void gen7_set_surface_msaa(struct gen7_surface_state *surf,
+                           unsigned num_samples,
+                           enum intel_msaa_layout layout);
+void gen7_set_surface_mcs_info(struct brw_context *brw,
+                               struct gen7_surface_state *surf,
+                               uint32_t surf_offset,
+                               const struct intel_mipmap_tree *mcs_mt,
+                               bool is_render_target);
 void gen7_check_surface_setup(struct gen7_surface_state *surf,
                               bool is_render_target);
 void gen7_init_vtable_surface_functions(struct brw_context *brw);
 void gen7_create_constant_surface(struct brw_context *brw,
 				  drm_intel_bo *bo,
+				  uint32_t offset,
 				  int width,
 				  uint32_t *out_offset);
 

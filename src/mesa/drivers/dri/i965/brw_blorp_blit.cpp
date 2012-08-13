@@ -22,6 +22,7 @@
  */
 
 #include "main/teximage.h"
+#include "main/fbobject.h"
 
 #include "glsl/ralloc.h"
 
@@ -60,6 +61,9 @@ fixup_mirroring(bool &mirror, GLint &coord0, GLint &coord1)
  * For clarity, the nomenclature of this function assumes we are clipping and
  * scissoring the X coordinate; the exact same logic applies for Y
  * coordinates.
+ *
+ * Note: this function may also be used to account for clipping of source
+ * coordinates, by swapping the roles of src and dst.
  */
 static inline bool
 clip_or_scissor(bool mirror, GLint &src_x0, GLint &src_x1, GLint &dst_x0,
@@ -107,6 +111,75 @@ clip_or_scissor(bool mirror, GLint &src_x0, GLint &src_x1, GLint &dst_x0,
 }
 
 
+static struct intel_mipmap_tree *
+find_miptree(GLbitfield buffer_bit, struct gl_renderbuffer *rb)
+{
+   struct intel_renderbuffer *irb = intel_renderbuffer(rb);
+   struct intel_mipmap_tree *mt = irb->mt;
+   if (buffer_bit == GL_STENCIL_BUFFER_BIT && mt->stencil_mt)
+      mt = mt->stencil_mt;
+   return mt;
+}
+
+void
+brw_blorp_blit_miptrees(struct intel_context *intel,
+                        struct intel_mipmap_tree *src_mt,
+                        struct intel_mipmap_tree *dst_mt,
+                        int src_x0, int src_y0,
+                        int dst_x0, int dst_y0,
+                        int dst_x1, int dst_y1,
+                        bool mirror_x, bool mirror_y)
+{
+   brw_blorp_blit_params params(brw_context(&intel->ctx),
+                                src_mt, dst_mt,
+                                src_x0, src_y0,
+                                dst_x0, dst_y0,
+                                dst_x1, dst_y1,
+                                mirror_x, mirror_y);
+   brw_blorp_exec(intel, &params);
+}
+
+static void
+do_blorp_blit(struct intel_context *intel, GLbitfield buffer_bit,
+              struct gl_renderbuffer *src_rb, struct gl_renderbuffer *dst_rb,
+              GLint srcX0, GLint srcY0,
+              GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1,
+              bool mirror_x, bool mirror_y)
+{
+   /* Find source/dst miptrees */
+   struct intel_mipmap_tree *src_mt = find_miptree(buffer_bit, src_rb);
+   struct intel_mipmap_tree *dst_mt = find_miptree(buffer_bit, dst_rb);
+
+   /* Get ready to blit.  This includes depth resolving the src and dst
+    * buffers if necessary.
+    */
+   intel_renderbuffer_resolve_depth(intel, intel_renderbuffer(src_rb));
+   intel_renderbuffer_resolve_depth(intel, intel_renderbuffer(dst_rb));
+
+   /* Do the blit */
+   brw_blorp_blit_miptrees(intel, src_mt, dst_mt,
+                           srcX0, srcY0, dstX0, dstY0, dstX1, dstY1,
+                           mirror_x, mirror_y);
+
+   intel_renderbuffer_set_needs_hiz_resolve(intel_renderbuffer(dst_rb));
+   intel_renderbuffer_set_needs_downsample(intel_renderbuffer(dst_rb));
+}
+
+
+static bool
+formats_match(GLbitfield buffer_bit, struct gl_renderbuffer *src_rb,
+              struct gl_renderbuffer *dst_rb)
+{
+   /* Note: don't just check gl_renderbuffer::Format, because in some cases
+    * multiple gl_formats resolve to the same native type in the miptree (for
+    * example MESA_FORMAT_X8_Z24 and MESA_FORMAT_S8_Z24), and we can blit
+    * between those formats.
+    */
+   return find_miptree(buffer_bit, src_rb)->format ==
+      find_miptree(buffer_bit, dst_rb)->format;
+}
+
+
 static bool
 try_blorp_blit(struct intel_context *intel,
                GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1,
@@ -120,83 +193,8 @@ try_blorp_blit(struct intel_context *intel,
     */
    intel_prepare_render(intel);
 
-   /* Find buffers */
    const struct gl_framebuffer *read_fb = ctx->ReadBuffer;
    const struct gl_framebuffer *draw_fb = ctx->DrawBuffer;
-   struct gl_renderbuffer *src_rb;
-   struct gl_renderbuffer *dst_rb;
-   switch (buffer_bit) {
-   case GL_COLOR_BUFFER_BIT:
-      src_rb = read_fb->_ColorReadBuffer;
-      dst_rb =
-         draw_fb->Attachment[
-            draw_fb->_ColorDrawBufferIndexes[0]].Renderbuffer;
-      break;
-   case GL_DEPTH_BUFFER_BIT:
-      src_rb = read_fb->Attachment[BUFFER_DEPTH].Renderbuffer;
-      dst_rb = draw_fb->Attachment[BUFFER_DEPTH].Renderbuffer;
-      break;
-   case GL_STENCIL_BUFFER_BIT:
-      src_rb = read_fb->Attachment[BUFFER_STENCIL].Renderbuffer;
-      dst_rb = draw_fb->Attachment[BUFFER_STENCIL].Renderbuffer;
-      break;
-   default:
-      assert(false);
-   }
-
-   /* Validate source */
-   if (!src_rb) return false;
-   struct intel_renderbuffer *src_irb = intel_renderbuffer(src_rb);
-   struct intel_mipmap_tree *src_mt = src_irb->mt;
-   if (!src_mt) return false;
-   if (buffer_bit == GL_STENCIL_BUFFER_BIT && src_mt->stencil_mt)
-      src_mt = src_mt->stencil_mt;
-   switch (src_mt->format) {
-   case MESA_FORMAT_ARGB8888:
-   case MESA_FORMAT_X8_Z24:
-   case MESA_FORMAT_S8:
-      break; /* Supported */
-   default:
-      /* Unsupported format.
-       *
-       * TODO: need to support all formats that are allowed as multisample
-       * render targets.
-       */
-      return false;
-   }
-
-   /* Validate destination */
-   if (!dst_rb) return false;
-   struct intel_renderbuffer *dst_irb = intel_renderbuffer(dst_rb);
-   struct intel_mipmap_tree *dst_mt = dst_irb->mt;
-   if (!dst_mt) return false;
-   if (buffer_bit == GL_STENCIL_BUFFER_BIT && dst_mt->stencil_mt)
-      dst_mt = dst_mt->stencil_mt;
-   switch (dst_mt->format) {
-   case MESA_FORMAT_ARGB8888:
-   case MESA_FORMAT_X8_Z24:
-   case MESA_FORMAT_S8:
-      break; /* Supported */
-   default:
-      /* Unsupported format.
-       *
-       * TODO: need to support all formats that are allowed as multisample
-       * render targets.
-       */
-      return false;
-   }
-
-   /* Account for the fact that in the system framebuffer, the origin is at
-    * the lower left.
-    */
-   if (read_fb->Name == 0) {
-      srcY0 = read_fb->Height - srcY0;
-      srcY1 = read_fb->Height - srcY1;
-   }
-   if (draw_fb->Name == 0) {
-      dstY0 = draw_fb->Height - dstY0;
-      dstY1 = draw_fb->Height - dstY1;
-   }
 
    /* Detect if the blit needs to be mirrored */
    bool mirror_x = false, mirror_y = false;
@@ -206,10 +204,8 @@ try_blorp_blit(struct intel_context *intel,
    fixup_mirroring(mirror_y, dstY0, dstY1);
 
    /* Make sure width and height match */
-   GLsizei width = srcX1 - srcX0;
-   GLsizei height = srcY1 - srcY0;
-   if (width != dstX1 - dstX0) return false;
-   if (height != dstY1 - dstY0) return false;
+   if (srcX1 - srcX0 != dstX1 - dstX0) return false;
+   if (srcY1 - srcY0 != dstY1 - dstY0) return false;
 
    /* If the destination rectangle needs to be clipped or scissored, do so.
     */
@@ -221,24 +217,67 @@ try_blorp_blit(struct intel_context *intel,
       return true;
    }
 
-   /* TODO: Clipping the source rectangle is not yet implemented. */
-   if (srcX0 < 0 || (GLuint) srcX1 > read_fb->Width) return false;
-   if (srcY0 < 0 || (GLuint) srcY1 > read_fb->Height) return false;
+   /* If the source rectangle needs to be clipped or scissored, do so. */
+   if (!(clip_or_scissor(mirror_x, dstX0, dstX1, srcX0, srcX1,
+                         0, read_fb->Width) &&
+         clip_or_scissor(mirror_y, dstY0, dstY1, srcY0, srcY1,
+                         0, read_fb->Height))) {
+      /* Everything got clipped/scissored away, so the blit was successful. */
+      return true;
+   }
 
-   /* Get ready to blit.  This includes depth resolving the src and dst
-    * buffers if necessary.
+   /* Account for the fact that in the system framebuffer, the origin is at
+    * the lower left.
     */
-   intel_renderbuffer_resolve_depth(intel, src_irb);
-   intel_renderbuffer_resolve_depth(intel, dst_irb);
+   if (_mesa_is_winsys_fbo(read_fb)) {
+      GLint tmp = read_fb->Height - srcY0;
+      srcY0 = read_fb->Height - srcY1;
+      srcY1 = tmp;
+      mirror_y = !mirror_y;
+   }
+   if (_mesa_is_winsys_fbo(draw_fb)) {
+      GLint tmp = draw_fb->Height - dstY0;
+      dstY0 = draw_fb->Height - dstY1;
+      dstY1 = tmp;
+      mirror_y = !mirror_y;
+   }
 
-   /* Do the blit */
-   brw_blorp_blit_params params(brw_context(ctx), src_mt, dst_mt,
-                                srcX0, srcY0, dstX0, dstY0, dstX1, dstY1,
-                                mirror_x, mirror_y);
-   brw_blorp_exec(intel, &params);
-
-   /* Mark the dst buffer as needing a HiZ resolve if necessary. */
-   intel_renderbuffer_set_needs_hiz_resolve(dst_irb);
+   /* Find buffers */
+   struct gl_renderbuffer *src_rb;
+   struct gl_renderbuffer *dst_rb;
+   switch (buffer_bit) {
+   case GL_COLOR_BUFFER_BIT:
+      src_rb = read_fb->_ColorReadBuffer;
+      for (unsigned i = 0; i < ctx->DrawBuffer->_NumColorDrawBuffers; ++i) {
+         dst_rb = ctx->DrawBuffer->_ColorDrawBuffers[i];
+         if (dst_rb && !formats_match(buffer_bit, src_rb, dst_rb))
+            return false;
+      }
+      for (unsigned i = 0; i < ctx->DrawBuffer->_NumColorDrawBuffers; ++i) {
+         dst_rb = ctx->DrawBuffer->_ColorDrawBuffers[i];
+         do_blorp_blit(intel, buffer_bit, src_rb, dst_rb, srcX0, srcY0,
+                       dstX0, dstY0, dstX1, dstY1, mirror_x, mirror_y);
+      }
+      break;
+   case GL_DEPTH_BUFFER_BIT:
+      src_rb = read_fb->Attachment[BUFFER_DEPTH].Renderbuffer;
+      dst_rb = draw_fb->Attachment[BUFFER_DEPTH].Renderbuffer;
+      if (!formats_match(buffer_bit, src_rb, dst_rb))
+         return false;
+      do_blorp_blit(intel, buffer_bit, src_rb, dst_rb, srcX0, srcY0,
+                    dstX0, dstY0, dstX1, dstY1, mirror_x, mirror_y);
+      break;
+   case GL_STENCIL_BUFFER_BIT:
+      src_rb = read_fb->Attachment[BUFFER_STENCIL].Renderbuffer;
+      dst_rb = draw_fb->Attachment[BUFFER_STENCIL].Renderbuffer;
+      if (!formats_match(buffer_bit, src_rb, dst_rb))
+         return false;
+      do_blorp_blit(intel, buffer_bit, src_rb, dst_rb, srcX0, srcY0,
+                    dstX0, dstY0, dstX1, dstY1, mirror_x, mirror_y);
+      break;
+   default:
+      assert(false);
+   }
 
    return true;
 }
@@ -283,6 +322,7 @@ enum sampler_message_arg
    SAMPLER_MESSAGE_ARG_U_INT,
    SAMPLER_MESSAGE_ARG_V_INT,
    SAMPLER_MESSAGE_ARG_SI_INT,
+   SAMPLER_MESSAGE_ARG_MCS_INT,
    SAMPLER_MESSAGE_ARG_ZERO_INT,
 };
 
@@ -298,25 +338,37 @@ enum sampler_message_arg
  *   offset = tile(tiling_format, encode_msaa(num_samples, layout, X, Y, S))
  *   (X, Y, S) = decode_msaa(num_samples, layout, detile(tiling_format, offset))
  *
- * For a single-sampled surface, or for a multisampled surface that stores
- * each sample in a different array slice, encode_msaa() and decode_msaa are
- * the identity function:
+ * For a single-sampled surface, or for a multisampled surface using
+ * INTEL_MSAA_LAYOUT_UMS, encode_msaa() and decode_msaa are the identity
+ * function:
  *
- *   encode_msaa(1, N/A, X, Y, 0) = (X, Y, 0)
- *   decode_msaa(1, N/A, X, Y, 0) = (X, Y, 0)
- *   encode_msaa(n, sliced, X, Y, S) = (X, Y, S)
- *   decode_msaa(n, sliced, X, Y, S) = (X, Y, S)
+ *   encode_msaa(1, NONE, X, Y, 0) = (X, Y, 0)
+ *   decode_msaa(1, NONE, X, Y, 0) = (X, Y, 0)
+ *   encode_msaa(n, UMS, X, Y, S) = (X, Y, S)
+ *   decode_msaa(n, UMS, X, Y, S) = (X, Y, S)
  *
- * For a 4x interleaved multisampled surface, encode_msaa() embeds the sample
- * number into bit 1 of the X and Y coordinates:
+ * For a 4x multisampled surface using INTEL_MSAA_LAYOUT_IMS, encode_msaa()
+ * embeds the sample number into bit 1 of the X and Y coordinates:
  *
- *   encode_msaa(4, interleaved, X, Y, S) = (X', Y', 0)
+ *   encode_msaa(4, IMS, X, Y, S) = (X', Y', 0)
  *     where X' = (X & ~0b1) << 1 | (S & 0b1) << 1 | (X & 0b1)
  *           Y' = (Y & ~0b1 ) << 1 | (S & 0b10) | (Y & 0b1)
- *   decode_msaa(4, interleaved, X, Y, 0) = (X', Y', S)
+ *   decode_msaa(4, IMS, X, Y, 0) = (X', Y', S)
  *     where X' = (X & ~0b11) >> 1 | (X & 0b1)
  *           Y' = (Y & ~0b11) >> 1 | (Y & 0b1)
  *           S = (Y & 0b10) | (X & 0b10) >> 1
+ *
+ * For an 8x multisampled surface using INTEL_MSAA_LAYOUT_IMS, encode_msaa()
+ * embeds the sample number into bits 1 and 2 of the X coordinate and bit 1 of
+ * the Y coordinate:
+ *
+ *   encode_msaa(8, IMS, X, Y, S) = (X', Y', 0)
+ *     where X' = (X & ~0b1) << 2 | (S & 0b100) | (S & 0b1) << 1 | (X & 0b1)
+ *           Y' = (Y & ~0b1) << 1 | (S & 0b10) | (Y & 0b1)
+ *   decode_msaa(8, IMS, X, Y, 0) = (X', Y', S)
+ *     where X' = (X & ~0b111) >> 2 | (X & 0b1)
+ *           Y' = (Y & ~0b11) >> 1 | (Y & 0b1)
+ *           S = (X & 0b100) | (Y & 0b10) | (X & 0b10) >> 1
  *
  * For X tiling, tile() combines together the low-order bits of the X and Y
  * coordinates in the pattern 0byyyxxxxxxxxx, creating 4k tiles that are 512
@@ -429,18 +481,24 @@ private:
    void alloc_push_const_regs(int base_reg);
    void compute_frag_coords();
    void translate_tiling(bool old_tiled_w, bool new_tiled_w);
-   void encode_msaa(unsigned num_samples, bool interleaved);
-   void decode_msaa(unsigned num_samples, bool interleaved);
+   void encode_msaa(unsigned num_samples, intel_msaa_layout layout);
+   void decode_msaa(unsigned num_samples, intel_msaa_layout layout);
    void kill_if_outside_dst_rect();
    void translate_dst_to_src();
    void single_to_blend();
-   void manual_blend();
+   void manual_blend(unsigned num_samples);
    void sample(struct brw_reg dst);
    void texel_fetch(struct brw_reg dst);
+   void mcs_fetch();
    void expand_to_32_bits(struct brw_reg src, struct brw_reg dst);
    void texture_lookup(struct brw_reg dst, GLuint msg_type,
                        const sampler_message_arg *args, int num_args);
    void render_target_write();
+
+   /**
+    * Base-2 logarithm of the maximum number of samples that can be blended.
+    */
+   static const unsigned LOG2_MAX_BLEND_SAMPLES = 3;
 
    void *mem_ctx;
    struct brw_context *brw;
@@ -463,13 +521,15 @@ private:
       struct brw_reg offset;
    } x_transform, y_transform;
 
-   /* Data to be written to render target (4 vec16's) */
-   struct brw_reg result;
+   /* Data read from texture (4 vec16's per array element) */
+   struct brw_reg texture_data[LOG2_MAX_BLEND_SAMPLES + 1];
 
-   /* Auxiliary storage for data returned by a sampling operation when
-    * blending (4 vec16's)
+   /* Auxiliary storage for the contents of the MCS surface.
+    *
+    * Since the sampler always returns 8 registers worth of data, this is 8
+    * registers wide, even though we only use the first 2 registers of it.
     */
-   struct brw_reg texture_data;
+   struct brw_reg mcs_data;
 
    /* X coordinates.  We have two of them so that we can perform coordinate
     * transformations easily.
@@ -520,14 +580,6 @@ const GLuint *
 brw_blorp_blit_program::compile(struct brw_context *brw,
                                 GLuint *program_size)
 {
-   /* Since blorp uses color textures and render targets to do all its work
-    * (even when blitting stencil and depth data), we always have to configure
-    * the Gen7 GPU to use sliced layout on Gen7.  On Gen6, the MSAA layout is
-    * always interleaved.
-    */
-   const bool rt_interleaved = key->rt_samples > 0 && brw->intel.gen == 6;
-   const bool tex_interleaved = key->tex_samples > 0 && brw->intel.gen == 6;
-
    /* Sanity checks */
    if (key->dst_tiled_w && key->rt_samples > 0) {
       /* If the destination image is W tiled and multisampled, then the thread
@@ -547,7 +599,7 @@ brw_blorp_blit_program::compile(struct brw_context *brw,
        */
       assert(!key->src_tiled_w);
       assert(key->tex_samples == key->src_samples);
-      assert(tex_interleaved == key->src_interleaved);
+      assert(key->tex_layout == key->src_layout);
       assert(key->tex_samples > 0);
    }
 
@@ -558,10 +610,15 @@ brw_blorp_blit_program::compile(struct brw_context *brw,
       assert(key->rt_samples > 0);
    }
 
-   /* Interleaved only makes sense on MSAA surfaces */
-   if (tex_interleaved) assert(key->tex_samples > 0);
-   if (key->src_interleaved) assert(key->src_samples > 0);
-   if (key->dst_interleaved) assert(key->dst_samples > 0);
+   /* Make sure layout is consistent with sample count */
+   assert((key->tex_layout == INTEL_MSAA_LAYOUT_NONE) ==
+          (key->tex_samples == 0));
+   assert((key->rt_layout == INTEL_MSAA_LAYOUT_NONE) ==
+          (key->rt_samples == 0));
+   assert((key->src_layout == INTEL_MSAA_LAYOUT_NONE) ==
+          (key->src_samples == 0));
+   assert((key->dst_layout == INTEL_MSAA_LAYOUT_NONE) ==
+          (key->dst_samples == 0));
 
    /* Set up prog_data */
    memset(&prog_data, 0, sizeof(prog_data));
@@ -589,12 +646,12 @@ brw_blorp_blit_program::compile(struct brw_context *brw,
     */
    if (rt_tiled_w != key->dst_tiled_w ||
        key->rt_samples != key->dst_samples ||
-       rt_interleaved != key->dst_interleaved) {
-      encode_msaa(key->rt_samples, rt_interleaved);
+       key->rt_layout != key->dst_layout) {
+      encode_msaa(key->rt_samples, key->rt_layout);
       /* Now (X, Y, S) = detile(rt_tiling, offset) */
       translate_tiling(rt_tiled_w, key->dst_tiled_w);
       /* Now (X, Y, S) = detile(dst_tiling, offset) */
-      decode_msaa(key->dst_samples, key->dst_interleaved);
+      decode_msaa(key->dst_samples, key->dst_layout);
    }
 
    /* Now (X, Y, S) = decode_msaa(dst_samples, detile(dst_tiling, offset)).
@@ -626,10 +683,10 @@ brw_blorp_blit_program::compile(struct brw_context *brw,
       if (brw->intel.gen == 6) {
          /* Gen6 hardware an automatically blend using the SAMPLE message */
          single_to_blend();
-         sample(result);
+         sample(texture_data[0]);
       } else {
          /* Gen7+ hardware doesn't automaticaly blend. */
-         manual_blend();
+         manual_blend(key->src_samples);
       }
    } else {
       /* We aren't blending, which means we just want to fetch a single sample
@@ -644,12 +701,12 @@ brw_blorp_blit_program::compile(struct brw_context *brw,
        */
       if (tex_tiled_w != key->src_tiled_w ||
           key->tex_samples != key->src_samples ||
-          tex_interleaved != key->src_interleaved) {
-         encode_msaa(key->src_samples, key->src_interleaved);
+          key->tex_layout != key->src_layout) {
+         encode_msaa(key->src_samples, key->src_layout);
          /* Now (X, Y, S) = detile(src_tiling, offset) */
          translate_tiling(key->src_tiled_w, tex_tiled_w);
          /* Now (X, Y, S) = detile(tex_tiling, offset) */
-         decode_msaa(key->tex_samples, tex_interleaved);
+         decode_msaa(key->tex_samples, key->tex_layout);
       }
 
       /* Now (X, Y, S) = decode_msaa(tex_samples, detile(tex_tiling, offset)).
@@ -658,7 +715,9 @@ brw_blorp_blit_program::compile(struct brw_context *brw,
        * the texturing unit, will cause data to be read from the correct
        * memory location.  So we can fetch the texel now.
        */
-      texel_fetch(result);
+      if (key->tex_layout == INTEL_MSAA_LAYOUT_CMS)
+         mcs_fetch();
+      texel_fetch(texture_data[0]);
    }
 
    /* Finally, write the fetched (or blended) value to the render target and
@@ -697,8 +756,13 @@ brw_blorp_blit_program::alloc_regs()
    prog_data.first_curbe_grf = reg;
    alloc_push_const_regs(reg);
    reg += BRW_BLORP_NUM_PUSH_CONST_REGS;
-   this->result = vec16(brw_vec8_grf(reg, 0)); reg += 8;
-   this->texture_data = vec16(brw_vec8_grf(reg, 0)); reg += 8;
+   for (unsigned i = 0; i < ARRAY_SIZE(texture_data); ++i) {
+      this->texture_data[i] =
+         retype(vec16(brw_vec8_grf(reg, 0)), key->texture_data_type);
+      reg += 8;
+   }
+   this->mcs_data =
+      retype(brw_vec8_grf(reg, 0), BRW_REGISTER_TYPE_UD); reg += 8;
    for (int i = 0; i < 2; ++i) {
       this->x_coords[i]
          = vec16(retype(brw_vec8_grf(reg++, 0), BRW_REGISTER_TYPE_UW));
@@ -710,6 +774,9 @@ brw_blorp_blit_program::alloc_regs()
       = vec16(retype(brw_vec8_grf(reg++, 0), BRW_REGISTER_TYPE_UW));
    this->t1 = vec16(retype(brw_vec8_grf(reg++, 0), BRW_REGISTER_TYPE_UW));
    this->t2 = vec16(retype(brw_vec8_grf(reg++, 0), BRW_REGISTER_TYPE_UW));
+
+   /* Make sure we didn't run out of registers */
+   assert(reg <= GEN7_MRF_HACK_START);
 
    int mrf = 2;
    this->base_mrf = mrf;
@@ -776,19 +843,48 @@ brw_blorp_blit_program::compute_frag_coords()
    brw_ADD(&func, Y, stride(suboffset(R1, 5), 2, 4, 0), brw_imm_v(0x11001100));
 
    if (key->persample_msaa_dispatch) {
-      /* The WM will be run in MSDISPMODE_PERSAMPLE with num_samples > 0.
-       * Therefore, subspan 0 will represent sample 0, subspan 1 will
-       * represent sample 1, and so on.
-       *
-       * So we need to populate S with the sequence (0, 0, 0, 0, 1, 1, 1, 1,
-       * 2, 2, 2, 2, 3, 3, 3, 3).  The easiest way to do this is to populate a
-       * temporary variable with the sequence (0, 1, 2, 3), and then copy from
-       * it using vstride=1, width=4, hstride=0.
-       *
-       * TODO: implement the necessary calculation for 8x multisampling.
-       */
-      brw_MOV(&func, t1, brw_imm_v(0x3210));
-      brw_MOV(&func, S, stride(t1, 1, 4, 0));
+      switch (key->rt_samples) {
+      case 4:
+         /* The WM will be run in MSDISPMODE_PERSAMPLE with num_samples == 4.
+          * Therefore, subspan 0 will represent sample 0, subspan 1 will
+          * represent sample 1, and so on.
+          *
+          * So we need to populate S with the sequence (0, 0, 0, 0, 1, 1, 1,
+          * 1, 2, 2, 2, 2, 3, 3, 3, 3).  The easiest way to do this is to
+          * populate a temporary variable with the sequence (0, 1, 2, 3), and
+          * then copy from it using vstride=1, width=4, hstride=0.
+          */
+         brw_MOV(&func, t1, brw_imm_v(0x3210));
+         brw_MOV(&func, S, stride(t1, 1, 4, 0));
+         break;
+      case 8: {
+         /* The WM will be run in MSDISPMODE_PERSAMPLE with num_samples == 8.
+          * Therefore, subspan 0 will represent sample N (where N is 0 or 4),
+          * subspan 1 will represent sample 1, and so on.  We can find the
+          * value of N by looking at R0.0 bits 7:6 ("Starting Sample Pair
+          * Index") and multiplying by two (since samples are always delivered
+          * in pairs).  That is, we compute 2*((R0.0 & 0xc0) >> 6) == (R0.0 &
+          * 0xc0) >> 5.
+          *
+          * Then we need to add N to the sequence (0, 0, 0, 0, 1, 1, 1, 1, 2,
+          * 2, 2, 2, 3, 3, 3, 3), which we compute by populating a temporary
+          * variable with the sequence (0, 1, 2, 3), and then reading from it
+          * using vstride=1, width=4, hstride=0.
+          */
+         struct brw_reg t1_ud1 = vec1(retype(t1, BRW_REGISTER_TYPE_UD));
+         struct brw_reg r0_ud1 = vec1(retype(R0, BRW_REGISTER_TYPE_UD));
+         brw_AND(&func, t1_ud1, r0_ud1, brw_imm_ud(0xc0));
+         brw_SHR(&func, t1_ud1, t1_ud1, brw_imm_ud(5));
+         brw_MOV(&func, t2, brw_imm_v(0x3210));
+         brw_ADD(&func, S, retype(t1_ud1, BRW_REGISTER_TYPE_UW),
+                 stride(t2, 1, 4, 0));
+         break;
+      }
+      default:
+         assert(!"Unrecognized sample count in "
+                "brw_blorp_blit_program::compute_frag_coords()");
+         break;
+      }
       s_is_zero = false;
    } else {
       /* Either the destination surface is single-sampled, or the WM will be
@@ -819,7 +915,7 @@ brw_blorp_blit_program::translate_tiling(bool old_tiled_w, bool new_tiled_w)
       return;
 
    /* In the code that follows, we can safely assume that S = 0, because W
-    * tiling formats always use interleaved encoding.
+    * tiling formats always use IMS layout.
     */
    assert(s_is_zero);
 
@@ -900,42 +996,84 @@ brw_blorp_blit_program::translate_tiling(bool old_tiled_w, bool new_tiled_w)
  *
  * This code modifies the X and Y coordinates according to the formula:
  *
- *   (X', Y', S') = encode_msaa_4x(X, Y, S)
+ *   (X', Y', S') = encode_msaa(num_samples, IMS, X, Y, S)
  *
  * (See brw_blorp_blit_program).
  */
 void
-brw_blorp_blit_program::encode_msaa(unsigned num_samples, bool interleaved)
+brw_blorp_blit_program::encode_msaa(unsigned num_samples,
+                                    intel_msaa_layout layout)
 {
-   if (num_samples == 0) {
+   switch (layout) {
+   case INTEL_MSAA_LAYOUT_NONE:
       /* No translation necessary, and S should already be zero. */
       assert(s_is_zero);
-   } else if (!interleaved) {
-      /* No translation necessary. */
-   } else {
-      /* encode_msaa(4, interleaved, X, Y, S) = (X', Y', 0)
-       *   where X' = (X & ~0b1) << 1 | (S & 0b1) << 1 | (X & 0b1)
-       *         Y' = (Y & ~0b1 ) << 1 | (S & 0b10) | (Y & 0b1)
+      break;
+   case INTEL_MSAA_LAYOUT_CMS:
+      /* We can't compensate for compressed layout since at this point in the
+       * program we haven't read from the MCS buffer.
        */
-      brw_AND(&func, t1, X, brw_imm_uw(0xfffe)); /* X & ~0b1 */
-      if (!s_is_zero) {
-         brw_AND(&func, t2, S, brw_imm_uw(1)); /* S & 0b1 */
-         brw_OR(&func, t1, t1, t2); /* (X & ~0b1) | (S & 0b1) */
+      assert(!"Bad layout in encode_msaa");
+      break;
+   case INTEL_MSAA_LAYOUT_UMS:
+      /* No translation necessary. */
+      break;
+   case INTEL_MSAA_LAYOUT_IMS:
+      switch (num_samples) {
+      case 4:
+         /* encode_msaa(4, IMS, X, Y, S) = (X', Y', 0)
+          *   where X' = (X & ~0b1) << 1 | (S & 0b1) << 1 | (X & 0b1)
+          *         Y' = (Y & ~0b1) << 1 | (S & 0b10) | (Y & 0b1)
+          */
+         brw_AND(&func, t1, X, brw_imm_uw(0xfffe)); /* X & ~0b1 */
+         if (!s_is_zero) {
+            brw_AND(&func, t2, S, brw_imm_uw(1)); /* S & 0b1 */
+            brw_OR(&func, t1, t1, t2); /* (X & ~0b1) | (S & 0b1) */
+         }
+         brw_SHL(&func, t1, t1, brw_imm_uw(1)); /* (X & ~0b1) << 1
+                                                   | (S & 0b1) << 1 */
+         brw_AND(&func, t2, X, brw_imm_uw(1)); /* X & 0b1 */
+         brw_OR(&func, Xp, t1, t2);
+         brw_AND(&func, t1, Y, brw_imm_uw(0xfffe)); /* Y & ~0b1 */
+         brw_SHL(&func, t1, t1, brw_imm_uw(1)); /* (Y & ~0b1) << 1 */
+         if (!s_is_zero) {
+            brw_AND(&func, t2, S, brw_imm_uw(2)); /* S & 0b10 */
+            brw_OR(&func, t1, t1, t2); /* (Y & ~0b1) << 1 | (S & 0b10) */
+         }
+         brw_AND(&func, t2, Y, brw_imm_uw(1)); /* Y & 0b1 */
+         brw_OR(&func, Yp, t1, t2);
+         break;
+      case 8:
+         /* encode_msaa(8, IMS, X, Y, S) = (X', Y', 0)
+          *   where X' = (X & ~0b1) << 2 | (S & 0b100) | (S & 0b1) << 1
+          *              | (X & 0b1)
+          *         Y' = (Y & ~0b1) << 1 | (S & 0b10) | (Y & 0b1)
+          */
+         brw_AND(&func, t1, X, brw_imm_uw(0xfffe)); /* X & ~0b1 */
+         brw_SHL(&func, t1, t1, brw_imm_uw(2)); /* (X & ~0b1) << 2 */
+         if (!s_is_zero) {
+            brw_AND(&func, t2, S, brw_imm_uw(4)); /* S & 0b100 */
+            brw_OR(&func, t1, t1, t2); /* (X & ~0b1) << 2 | (S & 0b100) */
+            brw_AND(&func, t2, S, brw_imm_uw(1)); /* S & 0b1 */
+            brw_SHL(&func, t2, t2, brw_imm_uw(1)); /* (S & 0b1) << 1 */
+            brw_OR(&func, t1, t1, t2); /* (X & ~0b1) << 2 | (S & 0b100)
+                                          | (S & 0b1) << 1 */
+         }
+         brw_AND(&func, t2, X, brw_imm_uw(1)); /* X & 0b1 */
+         brw_OR(&func, Xp, t1, t2);
+         brw_AND(&func, t1, Y, brw_imm_uw(0xfffe)); /* Y & ~0b1 */
+         brw_SHL(&func, t1, t1, brw_imm_uw(1)); /* (Y & ~0b1) << 1 */
+         if (!s_is_zero) {
+            brw_AND(&func, t2, S, brw_imm_uw(2)); /* S & 0b10 */
+            brw_OR(&func, t1, t1, t2); /* (Y & ~0b1) << 1 | (S & 0b10) */
+         }
+         brw_AND(&func, t2, Y, brw_imm_uw(1)); /* Y & 0b1 */
+         brw_OR(&func, Yp, t1, t2);
+         break;
       }
-      brw_SHL(&func, t1, t1, brw_imm_uw(1)); /* (X & ~0b1) << 1
-                                                | (S & 0b1) << 1 */
-      brw_AND(&func, t2, X, brw_imm_uw(1)); /* X & 0b1 */
-      brw_OR(&func, Xp, t1, t2);
-      brw_AND(&func, t1, Y, brw_imm_uw(0xfffe)); /* Y & ~0b1 */
-      brw_SHL(&func, t1, t1, brw_imm_uw(1)); /* (Y & ~0b1) << 1 */
-      if (!s_is_zero) {
-         brw_AND(&func, t2, S, brw_imm_uw(2)); /* S & 0b10 */
-         brw_OR(&func, t1, t1, t2); /* (Y & ~0b1) << 1 | (S & 0b10) */
-      }
-      brw_AND(&func, t2, Y, brw_imm_uw(1));
-      brw_OR(&func, Yp, t1, t2);
       SWAP_XY_AND_XPYP();
       s_is_zero = true;
+      break;
    }
 }
 
@@ -945,39 +1083,75 @@ brw_blorp_blit_program::encode_msaa(unsigned num_samples, bool interleaved)
  *
  * This code modifies the X and Y coordinates according to the formula:
  *
- *   (X', Y', S) = decode_msaa(num_samples, X, Y, S)
+ *   (X', Y', S) = decode_msaa(num_samples, IMS, X, Y, S)
  *
  * (See brw_blorp_blit_program).
  */
 void
-brw_blorp_blit_program::decode_msaa(unsigned num_samples, bool interleaved)
+brw_blorp_blit_program::decode_msaa(unsigned num_samples,
+                                    intel_msaa_layout layout)
 {
-   if (num_samples == 0) {
+   switch (layout) {
+   case INTEL_MSAA_LAYOUT_NONE:
       /* No translation necessary, and S should already be zero. */
       assert(s_is_zero);
-   } else if (!interleaved) {
-      /* No translation necessary. */
-   } else {
-      /* decode_msaa(4, interleaved, X, Y, 0) = (X', Y', S)
-       *   where X' = (X & ~0b11) >> 1 | (X & 0b1)
-       *         Y' = (Y & ~0b11) >> 1 | (Y & 0b1)
-       *         S = (Y & 0b10) | (X & 0b10) >> 1
+      break;
+   case INTEL_MSAA_LAYOUT_CMS:
+      /* We can't compensate for compressed layout since at this point in the
+       * program we don't have access to the MCS buffer.
        */
+      assert(!"Bad layout in encode_msaa");
+      break;
+   case INTEL_MSAA_LAYOUT_UMS:
+      /* No translation necessary. */
+      break;
+   case INTEL_MSAA_LAYOUT_IMS:
       assert(s_is_zero);
-      brw_AND(&func, t1, X, brw_imm_uw(0xfffc)); /* X & ~0b11 */
-      brw_SHR(&func, t1, t1, brw_imm_uw(1)); /* (X & ~0b11) >> 1 */
-      brw_AND(&func, t2, X, brw_imm_uw(1)); /* X & 0b1 */
-      brw_OR(&func, Xp, t1, t2);
-      brw_AND(&func, t1, Y, brw_imm_uw(0xfffc)); /* Y & ~0b11 */
-      brw_SHR(&func, t1, t1, brw_imm_uw(1)); /* (Y & ~0b11) >> 1 */
-      brw_AND(&func, t2, Y, brw_imm_uw(1)); /* Y & 0b1 */
-      brw_OR(&func, Yp, t1, t2);
-      brw_AND(&func, t1, Y, brw_imm_uw(2)); /* Y & 0b10 */
-      brw_AND(&func, t2, X, brw_imm_uw(2)); /* X & 0b10 */
-      brw_SHR(&func, t2, t2, brw_imm_uw(1)); /* (X & 0b10) >> 1 */
-      brw_OR(&func, S, t1, t2);
+      switch (num_samples) {
+      case 4:
+         /* decode_msaa(4, IMS, X, Y, 0) = (X', Y', S)
+          *   where X' = (X & ~0b11) >> 1 | (X & 0b1)
+          *         Y' = (Y & ~0b11) >> 1 | (Y & 0b1)
+          *         S = (Y & 0b10) | (X & 0b10) >> 1
+          */
+         brw_AND(&func, t1, X, brw_imm_uw(0xfffc)); /* X & ~0b11 */
+         brw_SHR(&func, t1, t1, brw_imm_uw(1)); /* (X & ~0b11) >> 1 */
+         brw_AND(&func, t2, X, brw_imm_uw(1)); /* X & 0b1 */
+         brw_OR(&func, Xp, t1, t2);
+         brw_AND(&func, t1, Y, brw_imm_uw(0xfffc)); /* Y & ~0b11 */
+         brw_SHR(&func, t1, t1, brw_imm_uw(1)); /* (Y & ~0b11) >> 1 */
+         brw_AND(&func, t2, Y, brw_imm_uw(1)); /* Y & 0b1 */
+         brw_OR(&func, Yp, t1, t2);
+         brw_AND(&func, t1, Y, brw_imm_uw(2)); /* Y & 0b10 */
+         brw_AND(&func, t2, X, brw_imm_uw(2)); /* X & 0b10 */
+         brw_SHR(&func, t2, t2, brw_imm_uw(1)); /* (X & 0b10) >> 1 */
+         brw_OR(&func, S, t1, t2);
+         break;
+      case 8:
+         /* decode_msaa(8, IMS, X, Y, 0) = (X', Y', S)
+          *   where X' = (X & ~0b111) >> 2 | (X & 0b1)
+          *         Y' = (Y & ~0b11) >> 1 | (Y & 0b1)
+          *         S = (X & 0b100) | (Y & 0b10) | (X & 0b10) >> 1
+          */
+         brw_AND(&func, t1, X, brw_imm_uw(0xfff8)); /* X & ~0b111 */
+         brw_SHR(&func, t1, t1, brw_imm_uw(2)); /* (X & ~0b111) >> 2 */
+         brw_AND(&func, t2, X, brw_imm_uw(1)); /* X & 0b1 */
+         brw_OR(&func, Xp, t1, t2);
+         brw_AND(&func, t1, Y, brw_imm_uw(0xfffc)); /* Y & ~0b11 */
+         brw_SHR(&func, t1, t1, brw_imm_uw(1)); /* (Y & ~0b11) >> 1 */
+         brw_AND(&func, t2, Y, brw_imm_uw(1)); /* Y & 0b1 */
+         brw_OR(&func, Yp, t1, t2);
+         brw_AND(&func, t1, X, brw_imm_uw(4)); /* X & 0b100 */
+         brw_AND(&func, t2, Y, brw_imm_uw(2)); /* Y & 0b10 */
+         brw_OR(&func, t1, t1, t2); /* (X & 0b100) | (Y & 0b10) */
+         brw_AND(&func, t2, X, brw_imm_uw(2)); /* X & 0b10 */
+         brw_SHR(&func, t2, t2, brw_imm_uw(1)); /* (X & 0b10) >> 1 */
+         brw_OR(&func, S, t1, t2);
+         break;
+      }
       s_is_zero = false;
       SWAP_XY_AND_XPYP();
+      break;
    }
 }
 
@@ -1039,35 +1213,128 @@ brw_blorp_blit_program::single_to_blend()
    SWAP_XY_AND_XPYP();
 }
 
-void
-brw_blorp_blit_program::manual_blend()
+
+/**
+ * Count the number of trailing 1 bits in the given value.  For example:
+ *
+ * count_trailing_one_bits(0) == 0
+ * count_trailing_one_bits(7) == 3
+ * count_trailing_one_bits(11) == 2
+ */
+inline int count_trailing_one_bits(unsigned value)
 {
-   /* TODO: support num_samples != 4 */
-   const int num_samples = 4;
+#if defined(__GNUC__) && ((__GNUC__ * 100 + __GNUC_MINOR__) >= 304) /* gcc 3.4 or later */
+   return __builtin_ctz(~value);
+#else
+   return _mesa_bitcount(value & ~(value + 1));
+#endif
+}
 
-   /* Gather sample 0 data first */
-   s_is_zero = true;
-   texel_fetch(result);
 
-   /* Gather data for remaining samples and accumulate it into result. */
-   s_is_zero = false;
-   for (int i = 1; i < num_samples; ++i) {
-      brw_MOV(&func, S, brw_imm_uw(i));
-      texel_fetch(texture_data);
+void
+brw_blorp_blit_program::manual_blend(unsigned num_samples)
+{
+   if (key->tex_layout == INTEL_MSAA_LAYOUT_CMS)
+      mcs_fetch();
 
-      /* TODO: should use a smaller loop bound for non-RGBA formats */
-      for (int j = 0; j < 4; ++j) {
-         brw_ADD(&func, offset(result, 2*j), offset(vec8(result), 2*j),
-                 offset(vec8(texture_data), 2*j));
+   /* We add together samples using a binary tree structure, e.g. for 4x MSAA:
+    *
+    *   result = ((sample[0] + sample[1]) + (sample[2] + sample[3])) / 4
+    *
+    * This ensures that when all samples have the same value, no numerical
+    * precision is lost, since each addition operation always adds two equal
+    * values, and summing two equal floating point values does not lose
+    * precision.
+    *
+    * We perform this computation by treating the texture_data array as a
+    * stack and performing the following operations:
+    *
+    * - push sample 0 onto stack
+    * - push sample 1 onto stack
+    * - add top two stack entries
+    * - push sample 2 onto stack
+    * - push sample 3 onto stack
+    * - add top two stack entries
+    * - add top two stack entries
+    * - divide top stack entry by 4
+    *
+    * Note that after pushing sample i onto the stack, the number of add
+    * operations we do is equal to the number of trailing 1 bits in i.  This
+    * works provided the total number of samples is a power of two, which it
+    * always is for i965.
+    *
+    * For integer formats, we replace the add operations with average
+    * operations and skip the final division.
+    */
+   typedef struct brw_instruction *(*brw_op2_ptr)(struct brw_compile *,
+                                                  struct brw_reg,
+                                                  struct brw_reg,
+                                                  struct brw_reg);
+   brw_op2_ptr combine_op =
+      key->texture_data_type == BRW_REGISTER_TYPE_F ? brw_ADD : brw_AVG;
+   unsigned stack_depth = 0;
+   for (unsigned i = 0; i < num_samples; ++i) {
+      assert(stack_depth == _mesa_bitcount(i)); /* Loop invariant */
+
+      /* Push sample i onto the stack */
+      assert(stack_depth < ARRAY_SIZE(texture_data));
+      if (i == 0) {
+         s_is_zero = true;
+      } else {
+         s_is_zero = false;
+         brw_MOV(&func, S, brw_imm_uw(i));
+      }
+      texel_fetch(texture_data[stack_depth++]);
+
+      if (i == 0 && key->tex_layout == INTEL_MSAA_LAYOUT_CMS) {
+         /* The Ivy Bridge PRM, Vol4 Part1 p27 (Multisample Control Surface)
+          * suggests an optimization:
+          *
+          *     "A simple optimization with probable large return in
+          *     performance is to compare the MCS value to zero (indicating
+          *     all samples are on sample slice 0), and sample only from
+          *     sample slice 0 using ld2dss if MCS is zero."
+          *
+          * Note that in the case where the MCS value is zero, sampling from
+          * sample slice 0 using ld2dss and sampling from sample 0 using
+          * ld2dms are equivalent (since all samples are on sample slice 0).
+          * Since we have already sampled from sample 0, all we need to do is
+          * skip the remaining fetches and averaging if MCS is zero.
+          */
+         brw_CMP(&func, vec16(brw_null_reg()), BRW_CONDITIONAL_NZ,
+                 mcs_data, brw_imm_ud(0));
+         brw_IF(&func, BRW_EXECUTE_16);
+      }
+
+      /* Do count_trailing_one_bits(i) times */
+      for (int j = count_trailing_one_bits(i); j-- > 0; ) {
+         assert(stack_depth >= 2);
+         --stack_depth;
+
+         /* TODO: should use a smaller loop bound for non_RGBA formats */
+         for (int k = 0; k < 4; ++k) {
+            combine_op(&func, offset(texture_data[stack_depth - 1], 2*k),
+                       offset(vec8(texture_data[stack_depth - 1]), 2*k),
+                       offset(vec8(texture_data[stack_depth]), 2*k));
+         }
       }
    }
 
-   /* Scale the result down by a factor of num_samples */
-   /* TODO: should use a smaller loop bound for non-RGBA formats */
-   for (int j = 0; j < 4; ++j) {
-      brw_MUL(&func, offset(result, 2*j), offset(vec8(result), 2*j),
-              brw_imm_f(1.0/num_samples));
+   /* We should have just 1 sample on the stack now. */
+   assert(stack_depth == 1);
+
+   if (key->texture_data_type == BRW_REGISTER_TYPE_F) {
+      /* Scale the result down by a factor of num_samples */
+      /* TODO: should use a smaller loop bound for non-RGBA formats */
+      for (int j = 0; j < 4; ++j) {
+         brw_MUL(&func, offset(texture_data[0], 2*j),
+                 offset(vec8(texture_data[0]), 2*j),
+                 brw_imm_f(1.0/num_samples));
+      }
    }
+
+   if (key->tex_layout == INTEL_MSAA_LAYOUT_CMS)
+      brw_ENDIF(&func);
 }
 
 /**
@@ -1109,6 +1376,12 @@ brw_blorp_blit_program::texel_fetch(struct brw_reg dst)
       SAMPLER_MESSAGE_ARG_U_INT,
       SAMPLER_MESSAGE_ARG_V_INT
    };
+   static const sampler_message_arg gen7_ld2dms_args[4] = {
+      SAMPLER_MESSAGE_ARG_SI_INT,
+      SAMPLER_MESSAGE_ARG_MCS_INT,
+      SAMPLER_MESSAGE_ARG_U_INT,
+      SAMPLER_MESSAGE_ARG_V_INT
+   };
 
    switch (brw->intel.gen) {
    case 6:
@@ -1116,19 +1389,48 @@ brw_blorp_blit_program::texel_fetch(struct brw_reg dst)
                      s_is_zero ? 2 : 5);
       break;
    case 7:
-      if (key->tex_samples > 0) {
+      switch (key->tex_layout) {
+      case INTEL_MSAA_LAYOUT_IMS:
+         /* From the Ivy Bridge PRM, Vol4 Part1 p72 (Multisampled Surface Storage
+          * Format):
+          *
+          *     If this field is MSFMT_DEPTH_STENCIL
+          *     [a.k.a. INTEL_MSAA_LAYOUT_IMS], the only sampling engine
+          *     messages allowed are "ld2dms", "resinfo", and "sampleinfo".
+          *
+          * So fall through to emit the same message as we use for
+          * INTEL_MSAA_LAYOUT_CMS.
+          */
+      case INTEL_MSAA_LAYOUT_CMS:
+         texture_lookup(dst, GEN7_SAMPLER_MESSAGE_SAMPLE_LD2DMS,
+                        gen7_ld2dms_args, ARRAY_SIZE(gen7_ld2dms_args));
+         break;
+      case INTEL_MSAA_LAYOUT_UMS:
          texture_lookup(dst, GEN7_SAMPLER_MESSAGE_SAMPLE_LD2DSS,
                         gen7_ld2dss_args, ARRAY_SIZE(gen7_ld2dss_args));
-      } else {
+         break;
+      case INTEL_MSAA_LAYOUT_NONE:
          assert(s_is_zero);
          texture_lookup(dst, GEN5_SAMPLER_MESSAGE_SAMPLE_LD, gen7_ld_args,
                         ARRAY_SIZE(gen7_ld_args));
+         break;
       }
       break;
    default:
       assert(!"Should not get here.");
       break;
    };
+}
+
+void
+brw_blorp_blit_program::mcs_fetch()
+{
+   static const sampler_message_arg gen7_ld_mcs_args[2] = {
+      SAMPLER_MESSAGE_ARG_U_INT,
+      SAMPLER_MESSAGE_ARG_V_INT
+   };
+   texture_lookup(vec16(mcs_data), GEN7_SAMPLER_MESSAGE_SAMPLE_LD_MCS,
+                  gen7_ld_mcs_args, ARRAY_SIZE(gen7_ld_mcs_args));
 }
 
 void
@@ -1174,6 +1476,24 @@ brw_blorp_blit_program::texture_lookup(struct brw_reg dst,
          else
             expand_to_32_bits(S, mrf);
          break;
+      case SAMPLER_MESSAGE_ARG_MCS_INT:
+         switch (key->tex_layout) {
+         case INTEL_MSAA_LAYOUT_CMS:
+            brw_MOV(&func, mrf, mcs_data);
+            break;
+         case INTEL_MSAA_LAYOUT_IMS:
+            /* When sampling from an IMS surface, MCS data is not relevant,
+             * and the hardware ignores it.  So don't bother populating it.
+             */
+            break;
+         default:
+            /* We shouldn't be trying to send MCS data with any other
+             * layouts.
+             */
+            assert (!"Unsupported layout for MCS data");
+            break;
+         }
+         break;
       case SAMPLER_MESSAGE_ARG_ZERO_INT:
          brw_MOV(&func, mrf, brw_imm_ud(0));
          break;
@@ -1206,7 +1526,8 @@ brw_blorp_blit_program::texture_lookup(struct brw_reg dst,
 void
 brw_blorp_blit_program::render_target_write()
 {
-   struct brw_reg mrf_rt_write = vec16(brw_message_reg(base_mrf));
+   struct brw_reg mrf_rt_write =
+      retype(vec16(brw_message_reg(base_mrf)), key->texture_data_type);
    int mrf_offset = 0;
 
    /* If we may have killed pixels, then we need to send R0 and R1 in a header
@@ -1224,7 +1545,7 @@ brw_blorp_blit_program::render_target_write()
    for (int i = 0; i < 4; ++i) {
       /* E.g. mov(16) m2.0<1>:f r2.0<8;8,1>:f { Align1, H1 } */
       brw_MOV(&func, offset(mrf_rt_write, mrf_offset),
-              offset(vec8(result), 2*i));
+              offset(vec8(texture_data[0]), 2*i));
       mrf_offset += 2;
    }
 
@@ -1266,6 +1587,35 @@ brw_blorp_coord_transform_params::setup(GLuint src0, GLuint dst0, GLuint dst1,
 }
 
 
+/**
+ * Determine which MSAA layout the GPU pipeline should be configured for,
+ * based on the chip generation, the number of samples, and the true layout of
+ * the image in memory.
+ */
+inline intel_msaa_layout
+compute_msaa_layout_for_pipeline(struct brw_context *brw, unsigned num_samples,
+                                 intel_msaa_layout true_layout)
+{
+   if (num_samples <= 1) {
+      /* When configuring the GPU for non-MSAA, we can still accommodate IMS
+       * format buffers, by transforming coordinates appropriately.
+       */
+      assert(true_layout == INTEL_MSAA_LAYOUT_NONE ||
+             true_layout == INTEL_MSAA_LAYOUT_IMS);
+      return INTEL_MSAA_LAYOUT_NONE;
+   } else {
+      assert(true_layout != INTEL_MSAA_LAYOUT_NONE);
+   }
+
+   /* Prior to Gen7, all MSAA surfaces use IMS layout. */
+   if (brw->intel.gen == 6) {
+      assert(true_layout == INTEL_MSAA_LAYOUT_IMS);
+   }
+
+   return true_layout;
+}
+
+
 brw_blorp_blit_params::brw_blorp_blit_params(struct brw_context *brw,
                                              struct intel_mipmap_tree *src_mt,
                                              struct intel_mipmap_tree *dst_mt,
@@ -1274,33 +1624,49 @@ brw_blorp_blit_params::brw_blorp_blit_params(struct brw_context *brw,
                                              GLuint dst_x1, GLuint dst_y1,
                                              bool mirror_x, bool mirror_y)
 {
-   src.set(src_mt, 0, 0);
-   dst.set(dst_mt, 0, 0);
+   src.set(brw, src_mt, 0, 0);
+   dst.set(brw, dst_mt, 0, 0);
 
    use_wm_prog = true;
    memset(&wm_prog_key, 0, sizeof(wm_prog_key));
 
-   if (brw->intel.gen > 6) {
-      /* Gen7 only supports interleaved MSAA surfaces for texturing with the
-       * ld2dms instruction (which blorp doesn't use).  So if the source is
-       * interleaved MSAA, we'll have to map it as a single-sampled texture
-       * and de-interleave the samples ourselves.
-       */
-      if (src.num_samples > 0 && src_mt->msaa_is_interleaved)
-         src.num_samples = 0;
+   /* texture_data_type indicates the register type that should be used to
+    * manipulate texture data.
+    */
+   switch (_mesa_get_format_datatype(src_mt->format)) {
+   case GL_UNSIGNED_NORMALIZED:
+   case GL_SIGNED_NORMALIZED:
+   case GL_FLOAT:
+      wm_prog_key.texture_data_type = BRW_REGISTER_TYPE_F;
+      break;
+   case GL_UNSIGNED_INT:
+      if (src_mt->format == MESA_FORMAT_S8) {
+         /* We process stencil as though it's an unsigned normalized color */
+         wm_prog_key.texture_data_type = BRW_REGISTER_TYPE_F;
+      } else {
+         wm_prog_key.texture_data_type = BRW_REGISTER_TYPE_UD;
+      }
+      break;
+   case GL_INT:
+      wm_prog_key.texture_data_type = BRW_REGISTER_TYPE_D;
+      break;
+   default:
+      assert(!"Unrecognized blorp format");
+      break;
+   }
 
-      /* Similarly, Gen7 only supports interleaved MSAA surfaces for depth and
+   if (brw->intel.gen > 6) {
+      /* Gen7's rendering hardware only supports the IMS layout for depth and
        * stencil render targets.  Blorp always maps its destination surface as
        * a color render target (even if it's actually a depth or stencil
-       * buffer).  So if the destination is interleaved MSAA, we'll have to
-       * map it as a single-sampled texture and interleave the samples
-       * ourselves.
+       * buffer).  So if the destination is IMS, we'll have to map it as a
+       * single-sampled texture and interleave the samples ourselves.
        */
-      if (dst.num_samples > 0 && dst_mt->msaa_is_interleaved)
+      if (dst_mt->msaa_layout == INTEL_MSAA_LAYOUT_IMS)
          dst.num_samples = 0;
    }
 
-   if (dst.map_stencil_as_y_tiled && dst.num_samples > 0) {
+   if (dst.map_stencil_as_y_tiled && dst.num_samples > 1) {
       /* If the destination surface is a W-tiled multisampled stencil buffer
        * that we're mapping as Y tiled, then we need to arrange for the WM
        * program to run once per sample rather than once per pixel, because
@@ -1310,7 +1676,7 @@ brw_blorp_blit_params::brw_blorp_blit_params(struct brw_context *brw,
       wm_prog_key.persample_msaa_dispatch = true;
    }
 
-   if (src.num_samples > 0 && dst.num_samples > 0) {
+   if (src.num_samples > 0 && dst.num_samples > 1) {
       /* We are blitting from a multisample buffer to a multisample buffer, so
        * we must preserve samples within a pixel.  This means we have to
        * arrange for the WM program to run once per sample rather than once
@@ -1327,7 +1693,7 @@ brw_blorp_blit_params::brw_blorp_blit_params(struct brw_context *brw,
    GLenum base_format = _mesa_get_format_base_format(src_mt->format);
    if (base_format != GL_DEPTH_COMPONENT && /* TODO: what about depth/stencil? */
        base_format != GL_STENCIL_INDEX &&
-       src_mt->num_samples > 0 && dst_mt->num_samples == 0) {
+       src_mt->num_samples > 1 && dst_mt->num_samples <= 1) {
       /* We are downsampling a color buffer, so blend. */
       wm_prog_key.blend = true;
    }
@@ -1342,11 +1708,19 @@ brw_blorp_blit_params::brw_blorp_blit_params(struct brw_context *brw,
    wm_prog_key.tex_samples = src.num_samples;
    wm_prog_key.rt_samples  = dst.num_samples;
 
-   /* src_interleaved and dst_interleaved indicate whether src and dst are
-    * truly interleaved.
+   /* tex_layout and rt_layout indicate the MSAA layout the GPU pipeline will
+    * use to access the source and destination surfaces.
     */
-   wm_prog_key.src_interleaved = src_mt->msaa_is_interleaved;
-   wm_prog_key.dst_interleaved = dst_mt->msaa_is_interleaved;
+   wm_prog_key.tex_layout =
+      compute_msaa_layout_for_pipeline(brw, src.num_samples, src.msaa_layout);
+   wm_prog_key.rt_layout =
+      compute_msaa_layout_for_pipeline(brw, dst.num_samples, dst.msaa_layout);
+
+   /* src_layout and dst_layout indicate the true MSAA layout used by src and
+    * dst.
+    */
+   wm_prog_key.src_layout = src_mt->msaa_layout;
+   wm_prog_key.dst_layout = dst_mt->msaa_layout;
 
    wm_prog_key.src_tiled_w = src.map_stencil_as_y_tiled;
    wm_prog_key.dst_tiled_w = dst.map_stencil_as_y_tiled;
@@ -1357,7 +1731,7 @@ brw_blorp_blit_params::brw_blorp_blit_params(struct brw_context *brw,
    wm_push_consts.x_transform.setup(src_x0, dst_x0, dst_x1, mirror_x);
    wm_push_consts.y_transform.setup(src_y0, dst_y0, dst_y1, mirror_y);
 
-   if (dst.num_samples == 0 && dst_mt->num_samples > 0) {
+   if (dst.num_samples <= 1 && dst_mt->num_samples > 1) {
       /* We must expand the rectangle we send through the rendering pipeline,
        * to account for the fact that we are mapping the destination region as
        * single-sampled when it is in fact multisampled.  We must also align
@@ -1366,15 +1740,28 @@ brw_blorp_blit_params::brw_blorp_blit_params(struct brw_context *brw,
        * will mean that pixels are scrambled within the multisampling pattern.
        * TODO: what if this makes the coordinates too large?
        *
-       * Note: this only works if the destination surface's MSAA layout is
-       * interleaved.  If it's sliced, then we have no choice but to set up
-       * the rendering pipeline as multisampled.
+       * Note: this only works if the destination surface uses the IMS layout.
+       * If it's UMS, then we have no choice but to set up the rendering
+       * pipeline as multisampled.
        */
-      assert(dst_mt->msaa_is_interleaved);
-      x0 = (x0 * 2) & ~3;
-      y0 = (y0 * 2) & ~3;
-      x1 = ALIGN(x1 * 2, 4);
-      y1 = ALIGN(y1 * 2, 4);
+      assert(dst_mt->msaa_layout == INTEL_MSAA_LAYOUT_IMS);
+      switch (dst_mt->num_samples) {
+      case 4:
+         x0 = ROUND_DOWN_TO(x0 * 2, 4);
+         y0 = ROUND_DOWN_TO(y0 * 2, 4);
+         x1 = ALIGN(x1 * 2, 4);
+         y1 = ALIGN(y1 * 2, 4);
+         break;
+      case 8:
+         x0 = ROUND_DOWN_TO(x0 * 4, 8);
+         y0 = ROUND_DOWN_TO(y0 * 2, 4);
+         x1 = ALIGN(x1 * 4, 8);
+         y1 = ALIGN(y1 * 2, 4);
+         break;
+      default:
+         assert(!"Unrecognized sample count in brw_blorp_blit_params ctor");
+         break;
+      }
       wm_prog_key.use_kill = true;
    }
 
@@ -1386,19 +1773,19 @@ brw_blorp_blit_params::brw_blorp_blit_params(struct brw_context *brw,
        * size, because the differences between W and Y tiling formats will
        * mean that pixels are scrambled within the tile.
        *
-       * Note: if the destination surface configured as an interleaved MSAA
-       * surface, then the effective tile size we need to align it to is
-       * smaller, because each pixel covers a 2x2 or a 4x2 block of samples.
+       * Note: if the destination surface configured to use IMS layout, then
+       * the effective tile size we need to align it to is smaller, because
+       * each pixel covers a 2x2 or a 4x2 block of samples.
        *
        * TODO: what if this makes the coordinates too large?
        */
       unsigned x_align = 64, y_align = 64;
-      if (dst_mt->num_samples > 0 && dst_mt->msaa_is_interleaved) {
+      if (dst_mt->msaa_layout == INTEL_MSAA_LAYOUT_IMS) {
          x_align /= (dst_mt->num_samples == 4 ? 2 : 4);
          y_align /= 2;
       }
-      x0 = (x0 & ~(x_align - 1)) * 2;
-      y0 = (y0 & ~(y_align - 1)) / 2;
+      x0 = ROUND_DOWN_TO(x0, x_align) * 2;
+      y0 = ROUND_DOWN_TO(y0, y_align) / 2;
       x1 = ALIGN(x1, x_align) * 2;
       y1 = ALIGN(y1, y_align) / 2;
       wm_prog_key.use_kill = true;

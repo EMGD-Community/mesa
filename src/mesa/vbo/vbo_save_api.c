@@ -471,6 +471,7 @@ _save_wrap_buffers(struct gl_context *ctx)
    save->prim[0].start = 0;
    save->prim[0].count = 0;
    save->prim[0].num_instances = 1;
+   save->prim[0].base_instance = 0;
    save->prim_count = 1;
 }
 
@@ -907,6 +908,7 @@ vbo_save_NotifyBegin(struct gl_context *ctx, GLenum mode)
    save->prim[i].start = save->vert_count;
    save->prim[i].count = 0;
    save->prim[i].num_instances = 1;
+   save->prim[i].base_instance = 0;
 
    if (save->out_of_memory) {
       _mesa_install_save_vtxfmt(ctx, &save->vtxfmt_noop);
@@ -1040,7 +1042,7 @@ _save_MultiDrawElements(GLenum mode, const GLsizei *count, GLenum type,
 
 static void GLAPIENTRY
 _save_MultiDrawElementsBaseVertex(GLenum mode, const GLsizei *count,
-                                  GLenum type, const GLvoid **indices,
+                                  GLenum type, const GLvoid * const *indices,
                                   GLsizei primcount, const GLint *basevertex)
 {
    GET_CURRENT_CONTEXT(ctx);
@@ -1062,6 +1064,45 @@ _save_DrawTransformFeedback(GLenum mode, GLuint name)
    (void) mode;
    (void) name;
    _mesa_compile_error(ctx, GL_INVALID_OPERATION, "glDrawTransformFeedback");
+}
+
+
+static void GLAPIENTRY
+_save_DrawTransformFeedbackStream(GLenum mode, GLuint name, GLuint stream)
+{
+   GET_CURRENT_CONTEXT(ctx);
+   (void) mode;
+   (void) name;
+   (void) stream;
+   _mesa_compile_error(ctx, GL_INVALID_OPERATION,
+                       "glDrawTransformFeedbackStream");
+}
+
+
+static void GLAPIENTRY
+_save_DrawTransformFeedbackInstanced(GLenum mode, GLuint name,
+                                     GLsizei primcount)
+{
+   GET_CURRENT_CONTEXT(ctx);
+   (void) mode;
+   (void) name;
+   (void) primcount;
+   _mesa_compile_error(ctx, GL_INVALID_OPERATION,
+                       "glDrawTransformFeedbackInstanced");
+}
+
+
+static void GLAPIENTRY
+_save_DrawTransformFeedbackStreamInstanced(GLenum mode, GLuint name,
+                                           GLuint stream, GLsizei primcount)
+{
+   GET_CURRENT_CONTEXT(ctx);
+   (void) mode;
+   (void) name;
+   (void) stream;
+   (void) primcount;
+   _mesa_compile_error(ctx, GL_INVALID_OPERATION,
+                       "glDrawTransformFeedbackStreamInstanced");
 }
 
 
@@ -1253,7 +1294,7 @@ _save_OBE_MultiDrawElements(GLenum mode, const GLsizei *count, GLenum type,
 static void GLAPIENTRY
 _save_OBE_MultiDrawElementsBaseVertex(GLenum mode, const GLsizei *count,
                                       GLenum type,
-                                      const GLvoid **indices,
+                                      const GLvoid * const *indices,
                                       GLsizei primcount,
                                       const GLint *basevertex)
 {
@@ -1414,9 +1455,13 @@ _save_vtxfmt_init(struct gl_context *ctx)
    vfmt->DrawRangeElements = _save_DrawRangeElements;
    vfmt->DrawElementsBaseVertex = _save_DrawElementsBaseVertex;
    vfmt->DrawRangeElementsBaseVertex = _save_DrawRangeElementsBaseVertex;
-   vfmt->DrawTransformFeedback = _save_DrawTransformFeedback;
    vfmt->MultiDrawElementsEXT = _save_MultiDrawElements;
    vfmt->MultiDrawElementsBaseVertex = _save_MultiDrawElementsBaseVertex;
+   vfmt->DrawTransformFeedback = _save_DrawTransformFeedback;
+   vfmt->DrawTransformFeedbackStream = _save_DrawTransformFeedbackStream;
+   vfmt->DrawTransformFeedbackInstanced = _save_DrawTransformFeedbackInstanced;
+   vfmt->DrawTransformFeedbackStreamInstanced =
+         _save_DrawTransformFeedbackStreamInstanced;
 }
 
 

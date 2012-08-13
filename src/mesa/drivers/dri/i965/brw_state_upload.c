@@ -143,7 +143,9 @@ static const struct brw_tracked_state *gen6_atoms[] =
     * table upload must be last.
     */
    &brw_vs_pull_constants,
+   &brw_vs_ubo_surfaces,
    &brw_wm_pull_constants,
+   &brw_wm_ubo_surfaces,
    &gen6_renderbuffer_surfaces,
    &brw_texture_surfaces,
    &gen6_sol_surface,
@@ -153,7 +155,7 @@ static const struct brw_tracked_state *gen6_atoms[] =
 
    &brw_samplers,
    &gen6_sampler_state,
-   &gen6_multisample_state, /* TODO: is this the right spot? */
+   &gen6_multisample_state,
 
    &gen6_vs_state,
    &gen6_gs_state,
@@ -215,14 +217,16 @@ const struct brw_tracked_state *gen7_atoms[] =
     * table upload must be last.
     */
    &brw_vs_pull_constants,
+   &brw_vs_ubo_surfaces,
    &brw_wm_pull_constants,
+   &brw_wm_ubo_surfaces,
    &gen6_renderbuffer_surfaces,
    &brw_texture_surfaces,
    &brw_vs_binding_table,
    &brw_wm_binding_table,
 
    &gen7_samplers,
-   &gen6_multisample_state, /* TODO: is this the right spot? */
+   &gen6_multisample_state,
 
    &gen7_disable_stages,
    &gen7_vs_state,

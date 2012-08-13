@@ -60,8 +60,7 @@ gen6_upload_wm_push_constants(struct brw_context *brw)
 				  32, &brw->wm.push_const_offset);
 
       for (i = 0; i < brw->wm.prog_data->nr_params; i++) {
-	 constants[i] = convert_param(brw->wm.prog_data->param_convert[i],
-				      brw->wm.prog_data->param[i]);
+	 constants[i] = *brw->wm.prog_data->param[i];
       }
 
       if (0) {
@@ -98,11 +97,9 @@ upload_wm_state(struct brw_context *brw)
    const struct brw_fragment_program *fp =
       brw_fragment_program_const(brw->fragment_program);
    uint32_t dw2, dw4, dw5, dw6;
-   bool multisampled = false;
 
    /* _NEW_BUFFERS */
-   if (ctx->DrawBuffer->_ColorDrawBuffers[0])
-      multisampled = ctx->DrawBuffer->_ColorDrawBuffers[0]->NumSamples > 0;
+   bool multisampled_fbo = ctx->DrawBuffer->Visual.samples > 1;
 
     /* CACHE_NEW_WM_PROG */
    if (brw->wm.prog_data->nr_params == 0) {
@@ -186,8 +183,9 @@ upload_wm_state(struct brw_context *brw)
    dw6 |= brw->wm.prog_data->barycentric_interp_modes <<
       GEN6_WM_BARYCENTRIC_INTERPOLATION_MODE_SHIFT;
 
-   /* _NEW_COLOR */
-   if (fp->program.UsesKill || ctx->Color.AlphaEnabled)
+   /* _NEW_COLOR, _NEW_MULTISAMPLE */
+   if (fp->program.UsesKill || ctx->Color.AlphaEnabled ||
+       ctx->Multisample.SampleAlphaToCoverage)
       dw5 |= GEN6_WM_KILL_ENABLE;
 
    if (brw_color_buffer_write_enabled(brw) ||
@@ -197,8 +195,12 @@ upload_wm_state(struct brw_context *brw)
 
    dw6 |= _mesa_bitcount_64(brw->fragment_program->Base.InputsRead) <<
       GEN6_WM_NUM_SF_OUTPUTS_SHIFT;
-   if (multisampled) {
-      dw6 |= GEN6_WM_MSRAST_ON_PATTERN;
+   if (multisampled_fbo) {
+      /* _NEW_MULTISAMPLE */
+      if (ctx->Multisample.Enabled)
+         dw6 |= GEN6_WM_MSRAST_ON_PATTERN;
+      else
+         dw6 |= GEN6_WM_MSRAST_OFF_PIXEL;
       dw6 |= GEN6_WM_MSDISPMODE_PERPIXEL;
    } else {
       dw6 |= GEN6_WM_MSRAST_OFF_PIXEL;
@@ -230,7 +232,8 @@ const struct brw_tracked_state gen6_wm_state = {
 		_NEW_COLOR |
 		_NEW_BUFFERS |
 		_NEW_PROGRAM_CONSTANTS |
-		_NEW_POLYGON),
+		_NEW_POLYGON |
+                _NEW_MULTISAMPLE),
       .brw   = (BRW_NEW_FRAGMENT_PROGRAM |
 		BRW_NEW_BATCH),
       .cache = (CACHE_NEW_SAMPLER |

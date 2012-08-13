@@ -14,18 +14,21 @@
 #include "AMDGPUISelLowering.h"
 #include "AMDILIntrinsicInfo.h"
 #include "AMDGPUUtil.h"
+#include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 
 using namespace llvm;
 
 AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
-  AMDILTargetLowering(TM)
+  TargetLowering(TM, new TargetLoweringObjectFileELF())
 {
+
+  // Initialize target lowering borrowed from AMDIL
+  InitAMDILLowering();
+
   // We need to custom lower some of the intrinsics
   setOperationAction(ISD::INTRINSIC_WO_CHAIN, MVT::Other, Custom);
-
-  setOperationAction(ISD::SELECT_CC, MVT::f32, Custom);
-  setOperationAction(ISD::SELECT_CC, MVT::i32, Custom);
 
   // Library functions.  These default to Expand, but we have instructions
   // for them.
@@ -33,22 +36,66 @@ AMDGPUTargetLowering::AMDGPUTargetLowering(TargetMachine &TM) :
   setOperationAction(ISD::FEXP2,  MVT::f32, Legal);
   setOperationAction(ISD::FRINT,  MVT::f32, Legal);
 
-  setOperationAction(ISD::UDIV, MVT::i32, Custom);
+  setOperationAction(ISD::UDIV, MVT::i32, Expand);
   setOperationAction(ISD::UDIVREM, MVT::i32, Custom);
+  setOperationAction(ISD::UREM, MVT::i32, Expand);
 }
+
+//===---------------------------------------------------------------------===//
+// TargetLowering Callbacks
+//===---------------------------------------------------------------------===//
+
+SDValue AMDGPUTargetLowering::LowerFormalArguments(
+                                      SDValue Chain,
+                                      CallingConv::ID CallConv,
+                                      bool isVarArg,
+                                      const SmallVectorImpl<ISD::InputArg> &Ins,
+                                      DebugLoc DL, SelectionDAG &DAG,
+                                      SmallVectorImpl<SDValue> &InVals) const
+{
+  // Lowering of arguments happens in R600LowerKernelParameters, so we can
+  // ignore the arguments here.
+  for (unsigned i = 0, e = Ins.size(); i < e; ++i) {
+    InVals.push_back(SDValue());
+  }
+  return Chain;
+}
+
+SDValue AMDGPUTargetLowering::LowerReturn(
+                                     SDValue Chain,
+                                     CallingConv::ID CallConv,
+                                     bool isVarArg,
+                                     const SmallVectorImpl<ISD::OutputArg> &Outs,
+                                     const SmallVectorImpl<SDValue> &OutVals,
+                                     DebugLoc DL, SelectionDAG &DAG) const
+{
+  return DAG.getNode(AMDGPUISD::RET_FLAG, DL, MVT::Other, Chain);
+}
+
+//===---------------------------------------------------------------------===//
+// Target specific lowering
+//===---------------------------------------------------------------------===//
 
 SDValue AMDGPUTargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG)
     const
 {
   switch (Op.getOpcode()) {
-  default: return AMDILTargetLowering::LowerOperation(Op, DAG);
+  default:
+    Op.getNode()->dump();
+    assert(0 && "Custom lowering code for this"
+        "instruction is not implemented yet!");
+    break;
+  // AMDIL DAG lowering
+  case ISD::SDIV: return LowerSDIV(Op, DAG);
+  case ISD::SREM: return LowerSREM(Op, DAG);
+  case ISD::BUILD_VECTOR: return LowerBUILD_VECTOR(Op, DAG);
+  case ISD::SIGN_EXTEND_INREG: return LowerSIGN_EXTEND_INREG(Op, DAG);
+  case ISD::BRCOND: return LowerBRCOND(Op, DAG);
+  // AMDGPU DAG lowering
   case ISD::INTRINSIC_WO_CHAIN: return LowerINTRINSIC_WO_CHAIN(Op, DAG);
-  case ISD::SELECT_CC: return LowerSELECT_CC(Op, DAG);
-  case ISD::UDIV:
-    return DAG.getNode(ISD::UDIVREM, Op.getDebugLoc(), Op.getValueType(),
-                       Op.getOperand(0), Op.getOperand(1)).getValue(0);
   case ISD::UDIVREM: return LowerUDIVREM(Op, DAG);
   }
+  return Op;
 }
 
 SDValue AMDGPUTargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
@@ -71,7 +118,7 @@ SDValue AMDGPUTargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
     case AMDGPUIntrinsic::AMDIL_fraction:
       return DAG.getNode(AMDGPUISD::FRACT, DL, VT, Op.getOperand(1));
     case AMDGPUIntrinsic::AMDIL_mad:
-      return DAG.getNode(AMDILISD::MAD, DL, VT, Op.getOperand(1),
+      return DAG.getNode(AMDGPUISD::MAD, DL, VT, Op.getOperand(1),
                               Op.getOperand(2), Op.getOperand(3));
     case AMDGPUIntrinsic::AMDIL_max:
       return DAG.getNode(AMDGPUISD::FMAX, DL, VT, Op.getOperand(1),
@@ -123,117 +170,11 @@ SDValue AMDGPUTargetLowering::LowerIntrinsicLRP(SDValue Op,
                                 Op.getOperand(1));
   SDValue OneSubAC = DAG.getNode(ISD::FMUL, DL, VT, OneSubA,
                                                     Op.getOperand(3));
-  return DAG.getNode(AMDILISD::MAD, DL, VT, Op.getOperand(1),
+  return DAG.getNode(AMDGPUISD::MAD, DL, VT, Op.getOperand(1),
                                                Op.getOperand(2),
                                                OneSubAC);
 }
 
-SDValue AMDGPUTargetLowering::LowerSELECT_CC(SDValue Op,
-    SelectionDAG &DAG) const
-{
-  DebugLoc DL = Op.getDebugLoc();
-  EVT VT = Op.getValueType();
-
-  SDValue LHS = Op.getOperand(0);
-  SDValue RHS = Op.getOperand(1);
-  SDValue True = Op.getOperand(2);
-  SDValue False = Op.getOperand(3);
-  SDValue CC = Op.getOperand(4);
-  ISD::CondCode CCOpcode = cast<CondCodeSDNode>(CC)->get();
-  SDValue Temp;
-
-  // LHS and RHS are guaranteed to be the same value type
-  EVT CompareVT = LHS.getValueType();
-
-  // We need all the operands of SELECT_CC to have the same value type, so if
-  // necessary we need to convert LHS and RHS to be the same type True and
-  // False.  True and False are guaranteed to have the same type as this
-  // SELECT_CC node.
-
-  if (CompareVT !=  VT) {
-    ISD::NodeType ConversionOp = ISD::DELETED_NODE;
-    if (VT == MVT::f32 && CompareVT == MVT::i32) {
-      if (isUnsignedIntSetCC(CCOpcode)) {
-        ConversionOp = ISD::UINT_TO_FP;
-      } else {
-        ConversionOp = ISD::SINT_TO_FP;
-      }
-    } else if (VT == MVT::i32 && CompareVT == MVT::f32) {
-      ConversionOp = ISD::FP_TO_SINT;
-    } else {
-      // I don't think there will be any other type pairings.
-      assert(!"Unhandled operand type parings in SELECT_CC");
-    }
-    // XXX Check the value of LHS and RHS and avoid creating sequences like
-    // (FTOI (ITOF))
-    LHS = DAG.getNode(ConversionOp, DL, VT, LHS);
-    RHS = DAG.getNode(ConversionOp, DL, VT, RHS);
-  }
-
-  // If True is a hardware TRUE value and False is a hardware FALSE value or
-  // vice-versa we can handle this with a native instruction (SET* instructions).
-  if ((isHWTrueValue(True) && isHWFalseValue(False))) {
-    return DAG.getNode(ISD::SELECT_CC, DL, VT, LHS, RHS, True, False, CC);
-  }
-
-  // XXX If True is a hardware TRUE value and False is a hardware FALSE value,
-  // we can handle this with a native instruction, but we need to swap true
-  // and false and change the conditional.
-  if (isHWTrueValue(False) && isHWFalseValue(True)) {
-  }
-
-  // XXX Check if we can lower this to a SELECT or if it is supported by a native
-  // operation. (The code below does this but we don't have the Instruction
-  // selection patterns to do this yet.
-#if 0
-  if (isZero(LHS) || isZero(RHS)) {
-    SDValue Cond = (isZero(LHS) ? RHS : LHS);
-    bool SwapTF = false;
-    switch (CCOpcode) {
-    case ISD::SETOEQ:
-    case ISD::SETUEQ:
-    case ISD::SETEQ:
-      SwapTF = true;
-      // Fall through
-    case ISD::SETONE:
-    case ISD::SETUNE:
-    case ISD::SETNE:
-      // We can lower to select
-      if (SwapTF) {
-        Temp = True;
-        True = False;
-        False = Temp;
-      }
-      // CNDE
-      return DAG.getNode(ISD::SELECT, DL, VT, Cond, True, False);
-    default:
-      // Supported by a native operation (CNDGE, CNDGT)
-      return DAG.getNode(ISD::SELECT_CC, DL, VT, LHS, RHS, True, False, CC);
-    }
-  }
-#endif
-
-  // If we make it this for it means we have no native instructions to handle
-  // this SELECT_CC, so we must lower it.
-  SDValue HWTrue, HWFalse;
-
-  if (VT == MVT::f32) {
-    HWTrue = DAG.getConstantFP(1.0f, VT);
-    HWFalse = DAG.getConstantFP(0.0f, VT);
-  } else if (VT == MVT::i32) {
-    HWTrue = DAG.getConstant(-1, VT);
-    HWFalse = DAG.getConstant(0, VT);
-  }
-  else {
-    assert(!"Unhandled value type in LowerSELECT_CC");
-  }
-
-  // Lower this unsupported SELECT_CC into a combination of two supported
-  // SELECT_CC operations.
-  SDValue Cond = DAG.getNode(ISD::SELECT_CC, DL, VT, LHS, RHS, HWTrue, HWFalse, CC);
-
-  return DAG.getNode(ISD::SELECT, DL, VT, Cond, True, False);
-}
 
 
 SDValue AMDGPUTargetLowering::LowerUDIVREM(SDValue Op,
@@ -381,8 +322,17 @@ void AMDGPUTargetLowering::addLiveIn(MachineInstr * MI,
 const char* AMDGPUTargetLowering::getTargetNodeName(unsigned Opcode) const
 {
   switch (Opcode) {
-  default: return AMDILTargetLowering::getTargetNodeName(Opcode);
+  default: return 0;
+  // AMDIL DAG nodes
+  NODE_NAME_CASE(MAD);
+  NODE_NAME_CASE(CALL);
+  NODE_NAME_CASE(UMUL);
+  NODE_NAME_CASE(DIV_INF);
+  NODE_NAME_CASE(VBUILD);
+  NODE_NAME_CASE(RET_FLAG);
+  NODE_NAME_CASE(BRANCH_COND);
 
+  // AMDGPU DAG nodes
   NODE_NAME_CASE(FRACT)
   NODE_NAME_CASE(FMAX)
   NODE_NAME_CASE(SMAX)

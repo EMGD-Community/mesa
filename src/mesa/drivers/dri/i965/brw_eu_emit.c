@@ -429,7 +429,6 @@ static void brw_set_math_message( struct brw_compile *p,
 				  GLuint function,
 				  GLuint integer_type,
 				  bool low_precision,
-				  bool saturate,
 				  GLuint dataType )
 {
    struct brw_context *brw = p->brw;
@@ -461,22 +460,24 @@ static void brw_set_math_message( struct brw_compile *p,
       break;
    }
 
+
    brw_set_message_descriptor(p, insn, BRW_SFID_MATH,
 			      msg_length, response_length, false, false);
    if (intel->gen == 5) {
       insn->bits3.math_gen5.function = function;
       insn->bits3.math_gen5.int_type = integer_type;
       insn->bits3.math_gen5.precision = low_precision;
-      insn->bits3.math_gen5.saturate = saturate;
+      insn->bits3.math_gen5.saturate = insn->header.saturate;
       insn->bits3.math_gen5.data_type = dataType;
       insn->bits3.math_gen5.snapshot = 0;
    } else {
       insn->bits3.math.function = function;
       insn->bits3.math.int_type = integer_type;
       insn->bits3.math.precision = low_precision;
-      insn->bits3.math.saturate = saturate;
+      insn->bits3.math.saturate = insn->header.saturate;
       insn->bits3.math.data_type = dataType;
    }
+   insn->header.saturate = 0;
 }
 
 
@@ -927,6 +928,28 @@ struct brw_instruction *brw_ADD(struct brw_compile *p,
    }
 
    return brw_alu2(p, BRW_OPCODE_ADD, dest, src0, src1);
+}
+
+struct brw_instruction *brw_AVG(struct brw_compile *p,
+                                struct brw_reg dest,
+                                struct brw_reg src0,
+                                struct brw_reg src1)
+{
+   assert(dest.type == src0.type);
+   assert(src0.type == src1.type);
+   switch (src0.type) {
+   case BRW_REGISTER_TYPE_B:
+   case BRW_REGISTER_TYPE_UB:
+   case BRW_REGISTER_TYPE_W:
+   case BRW_REGISTER_TYPE_UW:
+   case BRW_REGISTER_TYPE_D:
+   case BRW_REGISTER_TYPE_UD:
+      break;
+   default:
+      assert(!"Bad type for brw_AVG");
+   }
+
+   return brw_alu2(p, BRW_OPCODE_AVG, dest, src0, src1);
 }
 
 struct brw_instruction *brw_MUL(struct brw_compile *p,
@@ -1635,7 +1658,6 @@ void brw_WAIT (struct brw_compile *p)
 void brw_math( struct brw_compile *p,
 	       struct brw_reg dest,
 	       GLuint function,
-	       GLuint saturate,
 	       GLuint msg_reg_nr,
 	       struct brw_reg src,
 	       GLuint data_type,
@@ -1671,7 +1693,6 @@ void brw_math( struct brw_compile *p,
        * becomes FC[3:0] and ThreadCtrl becomes FC[5:4].
        */
       insn->header.destreg__conditionalmod = function;
-      insn->header.saturate = saturate;
 
       brw_set_dest(p, insn, dest);
       brw_set_src0(p, insn, src);
@@ -1692,7 +1713,6 @@ void brw_math( struct brw_compile *p,
 			   function,
 			   src.type == BRW_REGISTER_TYPE_D,
 			   precision,
-			   saturate,
 			   data_type);
    }
 }
@@ -1757,7 +1777,6 @@ void brw_math2(struct brw_compile *p,
 void brw_math_16( struct brw_compile *p,
 		  struct brw_reg dest,
 		  GLuint function,
-		  GLuint saturate,
 		  GLuint msg_reg_nr,
 		  struct brw_reg src,
 		  GLuint precision )
@@ -1772,7 +1791,6 @@ void brw_math_16( struct brw_compile *p,
        * becomes FC[3:0] and ThreadCtrl becomes FC[5:4].
        */
       insn->header.destreg__conditionalmod = function;
-      insn->header.saturate = saturate;
 
       /* Source modifiers are ignored for extended math instructions. */
       assert(!src.negate);
@@ -1800,7 +1818,6 @@ void brw_math_16( struct brw_compile *p,
 			function,
 			BRW_MATH_INTEGER_UNSIGNED,
 			precision,
-			saturate,
 			BRW_MATH_DATA_VECTOR);
 
    /* Second instruction:
@@ -1816,7 +1833,6 @@ void brw_math_16( struct brw_compile *p,
 			function,
 			BRW_MATH_INTEGER_UNSIGNED,
 			precision,
-			saturate,
 			BRW_MATH_DATA_VECTOR);
 
    brw_pop_insn_state(p);
@@ -2237,7 +2253,7 @@ void brw_fb_WRITE(struct brw_compile *p,
    else
       dest = retype(vec8(brw_null_reg()), BRW_REGISTER_TYPE_UW);
 
-   if (intel->gen >= 6 && binding_table_index == 0) {
+   if (intel->gen >= 6) {
       insn = next_insn(p, BRW_OPCODE_SENDC);
    } else {
       insn = next_insn(p, BRW_OPCODE_SEND);

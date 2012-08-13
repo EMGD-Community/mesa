@@ -161,8 +161,8 @@ client_state(struct gl_context *ctx, GLenum cap, GLboolean state)
    return;
 
 invalid_enum_error:
-   _mesa_error(ctx, GL_INVALID_ENUM, "gl%sClientState(0x%x)",
-               state ? "Enable" : "Disable", cap);
+   _mesa_error(ctx, GL_INVALID_ENUM, "gl%sClientState(%s)",
+               state ? "Enable" : "Disable", _mesa_lookup_enum_by_nr(cap));
 }
 
 
@@ -902,7 +902,7 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
        * GL_PRIMITIVE_RESTART_NV (which is client state).
        */
       case GL_PRIMITIVE_RESTART:
-         if (ctx->VersionMajor * 10 + ctx->VersionMinor < 31) {
+         if (ctx->Version < 31) {
             goto invalid_enum_error;
          }
          if (ctx->Array.PrimitiveRestart != state) {
@@ -937,8 +937,8 @@ _mesa_set_enable(struct gl_context *ctx, GLenum cap, GLboolean state)
    return;
 
 invalid_enum_error:
-   _mesa_error(ctx, GL_INVALID_ENUM, "gl%s(0x%x)",
-               state ? "Enable" : "Disable", cap);
+   _mesa_error(ctx, GL_INVALID_ENUM, "gl%s(%s)",
+               state ? "Enable" : "Disable", _mesa_lookup_enum_by_nr(cap));
 }
 
 
@@ -1419,7 +1419,7 @@ _mesa_IsEnabled( GLenum cap )
 
       /* GL 3.1 primitive restart */
       case GL_PRIMITIVE_RESTART:
-         if (ctx->VersionMajor * 10 + ctx->VersionMinor < 31) {
+         if (ctx->Version < 31) {
             goto invalid_enum_error;
          }
          return ctx->Array.PrimitiveRestart;
@@ -1441,6 +1441,7 @@ _mesa_IsEnabled( GLenum cap )
    return GL_FALSE;
 
 invalid_enum_error:
-   _mesa_error(ctx, GL_INVALID_ENUM, "glIsEnabled(0x%x)", (int) cap);
+   _mesa_error(ctx, GL_INVALID_ENUM, "glIsEnabled(%s)",
+               _mesa_lookup_enum_by_nr(cap));
    return GL_FALSE;
 }

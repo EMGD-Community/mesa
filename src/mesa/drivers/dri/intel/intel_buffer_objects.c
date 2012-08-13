@@ -140,15 +140,11 @@ intel_bufferobj_data(struct gl_context * ctx,
    intel_obj->sys_buffer = NULL;
 
    if (size != 0) {
-      if (usage == GL_DYNAMIC_DRAW
 #ifdef I915
-	  /* On pre-965, stick VBOs in system memory, as we're always doing
-	   * swtnl with their contents anyway.
-	   */
-	  || target == GL_ARRAY_BUFFER || target == GL_ELEMENT_ARRAY_BUFFER
-#endif
-	 )
-      {
+      /* On pre-965, stick VBOs in system memory, as we're always doing
+       * swtnl with their contents anyway.
+       */
+      if (target == GL_ARRAY_BUFFER || target == GL_ELEMENT_ARRAY_BUFFER) {
 	 intel_obj->sys_buffer = malloc(size);
 	 if (intel_obj->sys_buffer != NULL) {
 	    if (data != NULL)
@@ -156,6 +152,7 @@ intel_bufferobj_data(struct gl_context * ctx,
 	    return true;
 	 }
       }
+#endif
       intel_bufferobj_alloc_buffer(intel, intel_obj);
       if (!intel_obj->buffer)
          return false;
@@ -208,16 +205,16 @@ intel_bufferobj_subdata(struct gl_context * ctx,
       drm_intel_bo_busy(intel_obj->buffer) ||
       drm_intel_bo_references(intel->batch.bo, intel_obj->buffer);
 
-   /* replace the current busy bo with fresh data */
-   if (busy && size == intel_obj->Base.Size) {
-      drm_intel_bo_unreference(intel_obj->buffer);
-      intel_bufferobj_alloc_buffer(intel, intel_obj);
-      drm_intel_bo_subdata(intel_obj->buffer, 0, size, data);
-   } else if (intel->gen < 6) {
-      if (busy) {
-	 drm_intel_bo *temp_bo;
-
-	 temp_bo = drm_intel_bo_alloc(intel->bufmgr, "subdata temp", size, 64);
+   if (busy) {
+      if (size == intel_obj->Base.Size) {
+	 /* Replace the current busy bo with fresh data. */
+	 drm_intel_bo_unreference(intel_obj->buffer);
+	 intel_bufferobj_alloc_buffer(intel, intel_obj);
+	 drm_intel_bo_subdata(intel_obj->buffer, 0, size, data);
+      } else {
+	 /* Use the blitter to upload the new data. */
+	 drm_intel_bo *temp_bo =
+	    drm_intel_bo_alloc(intel->bufmgr, "subdata temp", size, 64);
 
 	 drm_intel_bo_subdata(temp_bo, 0, size, data);
 
@@ -227,14 +224,8 @@ intel_bufferobj_subdata(struct gl_context * ctx,
 				size);
 
 	 drm_intel_bo_unreference(temp_bo);
-      } else {
-	 drm_intel_bo_subdata(intel_obj->buffer, offset, size, data);
       }
    } else {
-      /* Can't use the blit to modify the buffer in the middle of batch. */
-      if (drm_intel_bo_references(intel->batch.bo, intel_obj->buffer)) {
-	 intel_batchbuffer_flush(intel);
-      }
       drm_intel_bo_subdata(intel_obj->buffer, offset, size, data);
    }
 }

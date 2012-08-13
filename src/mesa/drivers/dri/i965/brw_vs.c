@@ -218,8 +218,6 @@ do_vs_prog(struct brw_context *brw,
       c.prog_data.inputs_read |= VERT_BIT_EDGEFLAG;
    }
 
-   brw_compute_vue_map(&c);
-
    /* Put dummy slots into the VUE for the SF to put the replaced
     * point sprite coords in.  We shouldn't need these dummy slots,
     * which take up precious URB space, but it would mean that the SF
@@ -230,6 +228,8 @@ do_vs_prog(struct brw_context *brw,
       if (c.key.point_coord_replace & (1 << i))
 	 c.prog_data.outputs_written |= BITFIELD64_BIT(VERT_RESULT_TEX0 + i);
    }
+
+   brw_compute_vue_map(&c);
 
    if (0) {
       _mesa_fprint_program_opt(stdout, &c.vp->program.Base, PROG_PRINT_DEBUG,
@@ -250,7 +250,12 @@ do_vs_prog(struct brw_context *brw,
    if (c.prog_data.nr_pull_params)
       c.prog_data.num_surfaces = 1;
    if (c.vp->program.Base.SamplersUsed)
-      c.prog_data.num_surfaces = BRW_MAX_VS_SURFACES;
+      c.prog_data.num_surfaces = SURF_INDEX_VS_TEXTURE(BRW_MAX_TEX_UNIT);
+   if (prog &&
+       prog->_LinkedShaders[MESA_SHADER_VERTEX]->NumUniformBlocks) {
+      c.prog_data.num_surfaces =
+	 SURF_INDEX_VS_UBO(prog->_LinkedShaders[MESA_SHADER_VERTEX]->NumUniformBlocks);
+   }
 
    /* Scratch space is used for register spilling */
    if (c.last_scratch) {
@@ -319,8 +324,12 @@ static void brw_upload_vs_prog(struct brw_context *brw)
             = _mesa_logbase2(ctx->Transform.ClipPlanesEnabled) + 1;
       }
    }
-   key.copy_edgeflag = (ctx->Polygon.FrontMode != GL_FILL ||
-			ctx->Polygon.BackMode != GL_FILL);
+
+   /* _NEW_POLYGON */
+   if (intel->gen < 6) {
+      key.copy_edgeflag = (ctx->Polygon.FrontMode != GL_FILL ||
+                           ctx->Polygon.BackMode != GL_FILL);
+   }
 
    /* _NEW_LIGHT | _NEW_BUFFERS */
    key.clamp_vertex_color = ctx->Light._ClampVertexColor;
@@ -334,10 +343,7 @@ static void brw_upload_vs_prog(struct brw_context *brw)
    }
 
    /* _NEW_TEXTURE */
-   for (i = 0; i < BRW_MAX_TEX_UNIT; i++) {
-      if (prog->TexturesUsed[i])
-	 brw_populate_sampler_prog_key_data(ctx, &key.tex, i);
-   }
+   brw_populate_sampler_prog_key_data(ctx, prog, &key.tex);
 
    /* BRW_NEW_VERTICES */
    for (i = 0; i < VERT_ATTRIB_MAX; i++) {

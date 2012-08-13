@@ -110,7 +110,7 @@ i915_get_shader_param(struct pipe_screen *screen, unsigned shader, enum pipe_sha
             return PIPE_MAX_VERTEX_SAMPLERS;
          else
             return 0;
-      default:
+       default:
          return draw_get_shader_param(shader, cap);
       }
    case PIPE_SHADER_FRAGMENT:
@@ -206,6 +206,8 @@ i915_get_param(struct pipe_screen *screen, enum pipe_cap cap)
    case PIPE_CAP_TGSI_CAN_COMPACT_CONSTANTS:
    case PIPE_CAP_VERTEX_COLOR_UNCLAMPED:
    case PIPE_CAP_QUADS_FOLLOW_PROVOKING_VERTEX_CONVENTION:
+   case PIPE_CAP_START_INSTANCE:
+   case PIPE_CAP_QUERY_TIMESTAMP:
       return 0;
 
    case PIPE_CAP_CONSTANT_BUFFER_OFFSET_ALIGNMENT:
@@ -289,6 +291,7 @@ i915_is_format_supported(struct pipe_screen *screen,
 {
    static const enum pipe_format tex_supported[] = {
       PIPE_FORMAT_B8G8R8A8_UNORM,
+      PIPE_FORMAT_B8G8R8A8_SRGB,
       PIPE_FORMAT_B8G8R8X8_UNORM,
       PIPE_FORMAT_R8G8B8A8_UNORM,
       PIPE_FORMAT_R8G8B8X8_UNORM,

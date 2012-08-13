@@ -43,7 +43,6 @@ static const struct r600_reg evergreen_ctl_const_list[] = {
 };
 
 static const struct r600_reg evergreen_context_reg_list[] = {
-	{R_028000_DB_RENDER_CONTROL, 0, 0},
 	{R_028008_DB_DEPTH_VIEW, 0, 0},
 	{R_028010_DB_RENDER_OVERRIDE2, 0, 0},
 	{GROUP_FORCE_NEW_BLOCK, 0, 0},
@@ -66,8 +65,6 @@ static const struct r600_reg evergreen_context_reg_list[] = {
 	{R_028204_PA_SC_WINDOW_SCISSOR_TL, 0, 0},
 	{R_028208_PA_SC_WINDOW_SCISSOR_BR, 0, 0},
 	{R_028234_PA_SU_HARDWARE_SCREEN_OFFSET, 0, 0},
-	{R_028238_CB_TARGET_MASK, 0, 0},
-	{R_02823C_CB_SHADER_MASK, 0, 0},
 	{R_028250_PA_SC_VPORT_SCISSOR_0_TL, 0, 0},
 	{R_028254_PA_SC_VPORT_SCISSOR_0_BR, 0, 0},
 	{R_028350_SX_MISC, 0, 0},
@@ -76,14 +73,12 @@ static const struct r600_reg evergreen_context_reg_list[] = {
 	{R_02840C_VGT_MULTI_PRIM_IB_RESET_INDX, 0, 0},
 	{R_028A94_VGT_MULTI_PRIM_IB_RESET_EN, 0, 0},
 	{GROUP_FORCE_NEW_BLOCK, 0, 0},
-	{R_028410_SX_ALPHA_TEST_CONTROL, 0, 0},
 	{R_028414_CB_BLEND_RED, 0, 0},
 	{R_028418_CB_BLEND_GREEN, 0, 0},
 	{R_02841C_CB_BLEND_BLUE, 0, 0},
 	{R_028420_CB_BLEND_ALPHA, 0, 0},
 	{R_028430_DB_STENCILREFMASK, 0, 0},
 	{R_028434_DB_STENCILREFMASK_BF, 0, 0},
-	{R_028438_SX_ALPHA_REF, 0, 0},
 	{R_02843C_PA_CL_VPORT_XSCALE_0, 0, 0},
 	{R_028440_PA_CL_VPORT_XOFFSET_0, 0, 0},
 	{R_028444_PA_CL_VPORT_YSCALE_0, 0, 0},
@@ -303,7 +298,6 @@ static const struct r600_reg evergreen_context_reg_list[] = {
 };
 
 static const struct r600_reg cayman_context_reg_list[] = {
-	{R_028000_DB_RENDER_CONTROL, 0, 0},
 	{R_028008_DB_DEPTH_VIEW, 0, 0},
 	{R_028010_DB_RENDER_OVERRIDE2, 0, 0},
 	{GROUP_FORCE_NEW_BLOCK, 0, 0},
@@ -326,8 +320,6 @@ static const struct r600_reg cayman_context_reg_list[] = {
 	{R_028204_PA_SC_WINDOW_SCISSOR_TL, 0, 0},
 	{R_028208_PA_SC_WINDOW_SCISSOR_BR, 0, 0},
 	{R_028234_PA_SU_HARDWARE_SCREEN_OFFSET, 0, 0},
-	{R_028238_CB_TARGET_MASK, 0, 0},
-	{R_02823C_CB_SHADER_MASK, 0, 0},
 	{R_028250_PA_SC_VPORT_SCISSOR_0_TL, 0, 0},
 	{R_028254_PA_SC_VPORT_SCISSOR_0_BR, 0, 0},
 	{R_028350_SX_MISC, 0, 0},
@@ -336,14 +328,12 @@ static const struct r600_reg cayman_context_reg_list[] = {
 	{R_02840C_VGT_MULTI_PRIM_IB_RESET_INDX, 0, 0},
 	{R_028A94_VGT_MULTI_PRIM_IB_RESET_EN, 0, 0},
 	{GROUP_FORCE_NEW_BLOCK, 0, 0},
-	{R_028410_SX_ALPHA_TEST_CONTROL, 0, 0},
 	{R_028414_CB_BLEND_RED, 0, 0},
 	{R_028418_CB_BLEND_GREEN, 0, 0},
 	{R_02841C_CB_BLEND_BLUE, 0, 0},
 	{R_028420_CB_BLEND_ALPHA, 0, 0},
 	{R_028430_DB_STENCILREFMASK, 0, 0},
 	{R_028434_DB_STENCILREFMASK_BF, 0, 0},
-	{R_028438_SX_ALPHA_REF, 0, 0},
 	{R_02843C_PA_CL_VPORT_XSCALE_0, 0, 0},
 	{R_028440_PA_CL_VPORT_XOFFSET_0, 0, 0},
 	{R_028444_PA_CL_VPORT_YSCALE_0, 0, 0},
@@ -585,55 +575,6 @@ static const struct r600_reg cayman_context_reg_list[] = {
 	{R_028EAC_CB_COLOR11_DIM, 0, 0},
 };
 
-/* SHADER RESOURCE EG/CM */
-static int evergreen_resource_range_init(struct r600_context *ctx, struct r600_range *range, unsigned offset, unsigned nblocks, unsigned stride)
-{
-	struct r600_reg r600_shader_resource[] = {
-		{R_030000_RESOURCE0_WORD0, REG_FLAG_NEED_BO, 0},
-		{R_030004_RESOURCE0_WORD1, REG_FLAG_NEED_BO, 0},
-		{R_030008_RESOURCE0_WORD2, 0, 0},
-		{R_03000C_RESOURCE0_WORD3, 0, 0},
-		{R_030010_RESOURCE0_WORD4, 0, 0},
-		{R_030014_RESOURCE0_WORD5, 0, 0},
-		{R_030018_RESOURCE0_WORD6, 0, 0},
-		{R_03001C_RESOURCE0_WORD7, 0, 0},
-	};
-	unsigned nreg = Elements(r600_shader_resource);
-
-	return r600_resource_init(ctx, range, offset, nblocks, stride, r600_shader_resource, nreg, EVERGREEN_RESOURCE_OFFSET);
-}
-
-/* SHADER SAMPLER BORDER EG/CM */
-static int evergreen_state_sampler_border_init(struct r600_context *ctx, uint32_t offset, unsigned id)
-{
-	struct r600_reg r600_shader_sampler_border[] = {
-		{R_00A400_TD_PS_SAMPLER0_BORDER_INDEX, 0, 0},
-		{R_00A404_TD_PS_SAMPLER0_BORDER_RED, 0, 0},
-		{R_00A408_TD_PS_SAMPLER0_BORDER_GREEN, 0, 0},
-		{R_00A40C_TD_PS_SAMPLER0_BORDER_BLUE, 0, 0},
-		{R_00A410_TD_PS_SAMPLER0_BORDER_ALPHA, 0, 0},
-	};
-	unsigned nreg = Elements(r600_shader_sampler_border);
-	unsigned fake_offset = (offset - R_00A400_TD_PS_SAMPLER0_BORDER_INDEX) * 0x100 + 0x40000 + id * 0x1C;
-	struct r600_range *range;
-	struct r600_block *block;
-	int r;
-
-	for (int i = 0; i < nreg; i++) {
-		r600_shader_sampler_border[i].offset -= R_00A400_TD_PS_SAMPLER0_BORDER_INDEX;
-		r600_shader_sampler_border[i].offset += fake_offset;
-	}
-	r = r600_context_add_block(ctx, r600_shader_sampler_border, nreg, PKT3_SET_CONFIG_REG, 0);
-	if (r) {
-		return r;
-	}
-	/* set proper offset */
-	range = &ctx->range[CTX_RANGE_ID(r600_shader_sampler_border[0].offset)];
-	block = range->blocks[CTX_BLOCK_ID(r600_shader_sampler_border[0].offset)];
-	block->pm4[1] = (offset - EVERGREEN_CONFIG_REG_OFFSET) >> 2;
-	return 0;
-}
-
 static int evergreen_loop_const_init(struct r600_context *ctx, uint32_t offset)
 {
 	unsigned nreg = 32;
@@ -674,41 +615,6 @@ int evergreen_context_init(struct r600_context *ctx)
 	if (r)
 		goto out_err;
 
-
-	/* PS SAMPLER */
-	for (int j = 0, offset = 0; j < 18; j++, offset += 0xC) {
-		r = r600_state_sampler_init(ctx, offset);
-		if (r)
-			goto out_err;
-	}
-	/* VS SAMPLER */
-	for (int j = 0, offset = 0xD8; j < 18; j++, offset += 0xC) {
-		r = r600_state_sampler_init(ctx, offset);
-		if (r)
-			goto out_err;
-	}
-	/* PS SAMPLER BORDER */
-	for (int j = 0; j < 18; j++) {
-		r = evergreen_state_sampler_border_init(ctx, R_00A400_TD_PS_SAMPLER0_BORDER_INDEX, j);
-		if (r)
-			goto out_err;
-	}
-	/* VS SAMPLER BORDER */
-	for (int j = 0; j < 18; j++) {
-		r = evergreen_state_sampler_border_init(ctx, R_00A414_TD_VS_SAMPLER0_BORDER_INDEX, j);
-		if (r)
-			goto out_err;
-	}
-
-	ctx->num_ps_resources = 176;
-	ctx->num_vs_resources = 160;
-	r = evergreen_resource_range_init(ctx, &ctx->ps_resources, 0, 176, 0x20);
-	if (r)
-		goto out_err;
-	r = evergreen_resource_range_init(ctx, &ctx->vs_resources, 0x1600, 160, 0x20);
-	if (r)
-		goto out_err;
-
 	/* PS loop const */
 	evergreen_loop_const_init(ctx, 0);
 	/* VS loop const */
@@ -723,66 +629,6 @@ int evergreen_context_init(struct r600_context *ctx)
 out_err:
 	r600_context_fini(ctx);
 	return r;
-}
-
-static inline void evergreen_context_pipe_state_set_sampler_border(struct r600_context *ctx, struct r600_pipe_state *state, unsigned offset, unsigned id)
-{
-	unsigned fake_offset = (offset - R_00A400_TD_PS_SAMPLER0_BORDER_INDEX) * 0x100 + 0x40000 + id * 0x1C;
-	struct r600_range *range;
-	struct r600_block *block;
-	int i;
-	int dirty;
-
-	range = &ctx->range[CTX_RANGE_ID(fake_offset)];
-	block = range->blocks[CTX_BLOCK_ID(fake_offset)];
-	if (state == NULL) {
-		block->status &= ~(R600_BLOCK_STATUS_ENABLED | R600_BLOCK_STATUS_DIRTY);
-		LIST_DELINIT(&block->list);
-		LIST_DELINIT(&block->enable_list);
-		return;
-	}
-	if (state->nregs <= 3) {
-		return;
-	}
-
-	dirty = block->status & R600_BLOCK_STATUS_DIRTY;
-	if (block->reg[0] != id) {
-		block->reg[0] = id;
-		dirty |= R600_BLOCK_STATUS_DIRTY;
-	}
-
-	for (i = 1; i < 5; i++) {
-		if (block->reg[i] != state->regs[i + 2].value) {
-			block->reg[i] = state->regs[i + 2].value;
-			dirty |= R600_BLOCK_STATUS_DIRTY;
-		}
-	}
-
-	/* We have to flush the shaders before we change the border color
-	 * registers, or previous draw commands that haven't completed yet
-	 * will end up using the new border color. */
-	if (dirty & R600_BLOCK_STATUS_DIRTY)
-		r600_context_ps_partial_flush(ctx);
-	if (dirty)
-		r600_context_dirty_block(ctx, block, dirty, 4);
-}
-
-void evergreen_context_pipe_state_set_ps_sampler(struct r600_context *ctx, struct r600_pipe_state *state, unsigned id)
-{
-	unsigned offset;
-
-	offset = R_03C000_SQ_TEX_SAMPLER_WORD0_0 + 12*id;
-	r600_context_pipe_state_set_sampler(ctx, state, offset);
-	evergreen_context_pipe_state_set_sampler_border(ctx, state, R_00A400_TD_PS_SAMPLER0_BORDER_INDEX, id);
-}
-
-void evergreen_context_pipe_state_set_vs_sampler(struct r600_context *ctx, struct r600_pipe_state *state, unsigned id)
-{
-	unsigned offset;
-
-	offset = R_03C000_SQ_TEX_SAMPLER_WORD0_0 + 12*(id + 18);
-	r600_context_pipe_state_set_sampler(ctx, state, offset);
-	evergreen_context_pipe_state_set_sampler_border(ctx, state, R_00A414_TD_VS_SAMPLER0_BORDER_INDEX, id);
 }
 
 void evergreen_flush_vgt_streamout(struct r600_context *ctx)

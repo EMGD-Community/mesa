@@ -30,49 +30,6 @@ extern "C" {
 
 namespace brw {
 
-src_reg::src_reg(dst_reg reg)
-{
-   init();
-
-   this->file = reg.file;
-   this->reg = reg.reg;
-   this->reg_offset = reg.reg_offset;
-   this->type = reg.type;
-   this->reladdr = reg.reladdr;
-   this->fixed_hw_reg = reg.fixed_hw_reg;
-
-   int swizzles[4];
-   int next_chan = 0;
-   int last = 0;
-
-   for (int i = 0; i < 4; i++) {
-      if (!(reg.writemask & (1 << i)))
-	 continue;
-
-      swizzles[next_chan++] = last = i;
-   }
-
-   for (; next_chan < 4; next_chan++) {
-      swizzles[next_chan] = last;
-   }
-
-   this->swizzle = BRW_SWIZZLE4(swizzles[0], swizzles[1],
-				swizzles[2], swizzles[3]);
-}
-
-dst_reg::dst_reg(src_reg reg)
-{
-   init();
-
-   this->file = reg.file;
-   this->reg = reg.reg;
-   this->reg_offset = reg.reg_offset;
-   this->type = reg.type;
-   this->writemask = WRITEMASK_XYZW;
-   this->reladdr = reg.reladdr;
-   this->fixed_hw_reg = reg.fixed_hw_reg;
-}
-
 vec4_instruction::vec4_instruction(vec4_visitor *v,
 				   enum opcode opcode, dst_reg dst,
 				   src_reg src0, src_reg src1, src_reg src2)
@@ -873,6 +830,13 @@ vec4_visitor::visit(ir_variable *ir)
    case ir_var_uniform:
       reg = new(this->mem_ctx) dst_reg(UNIFORM, this->uniforms);
 
+      /* Thanks to the lower_ubo_reference pass, we will see only
+       * ir_binop_ubo_load expressions and not ir_dereference_variable for UBO
+       * variables, so no need for them to be in variable_ht.
+       */
+      if (ir->uniform_block != -1)
+         return;
+
       /* Track how big the whole uniform variable is, in case we need to put a
        * copy of its data into pull constants for array access.
        */
@@ -1254,6 +1218,23 @@ vec4_visitor::visit(ir_expression *ir)
    case ir_unop_rsq:
       emit_math(SHADER_OPCODE_RSQ, result_dst, op[0]);
       break;
+
+   case ir_unop_bitcast_i2f:
+   case ir_unop_bitcast_u2f:
+      this->result = op[0];
+      this->result.type = BRW_REGISTER_TYPE_F;
+      break;
+
+   case ir_unop_bitcast_f2i:
+      this->result = op[0];
+      this->result.type = BRW_REGISTER_TYPE_D;
+      break;
+
+   case ir_unop_bitcast_f2u:
+      this->result = op[0];
+      this->result.type = BRW_REGISTER_TYPE_UD;
+      break;
+
    case ir_unop_i2f:
    case ir_unop_i2u:
    case ir_unop_u2i:
@@ -1261,6 +1242,7 @@ vec4_visitor::visit(ir_expression *ir)
    case ir_unop_b2f:
    case ir_unop_b2i:
    case ir_unop_f2i:
+   case ir_unop_f2u:
       emit(MOV(result_dst, op[0]));
       break;
    case ir_unop_f2b:
@@ -1338,6 +1320,51 @@ vec4_visitor::visit(ir_expression *ir)
       else
 	 inst = emit(BRW_OPCODE_SHR, result_dst, op[0], op[1]);
       break;
+
+   case ir_binop_ubo_load: {
+      ir_constant *uniform_block = ir->operands[0]->as_constant();
+      ir_constant *const_offset_ir = ir->operands[1]->as_constant();
+      unsigned const_offset = const_offset_ir ? const_offset_ir->value.u[0] : 0;
+      src_reg offset = op[1];
+
+      /* Now, load the vector from that offset. */
+      assert(ir->type->is_vector() || ir->type->is_scalar());
+
+      src_reg packed_consts = src_reg(this, glsl_type::vec4_type);
+      packed_consts.type = result.type;
+      src_reg surf_index =
+         src_reg(SURF_INDEX_VS_UBO(uniform_block->value.u[0]));
+      if (const_offset_ir) {
+         offset = src_reg(const_offset / 16);
+      } else {
+         emit(BRW_OPCODE_SHR, dst_reg(offset), offset, src_reg(4));
+      }
+
+      vec4_instruction *pull =
+         emit(new(mem_ctx) vec4_instruction(this,
+                                            VS_OPCODE_PULL_CONSTANT_LOAD,
+                                            dst_reg(packed_consts),
+                                            surf_index,
+                                            offset));
+      pull->base_mrf = 14;
+      pull->mlen = 1;
+
+      packed_consts.swizzle = swizzle_for_size(ir->type->vector_elements);
+      packed_consts.swizzle += BRW_SWIZZLE4(const_offset % 16 / 4,
+                                            const_offset % 16 / 4,
+                                            const_offset % 16 / 4,
+                                            const_offset % 16 / 4);
+
+      /* UBO bools are any nonzero int.  We store bools as either 0 or 1. */
+      if (ir->type->base_type == GLSL_TYPE_BOOL) {
+         emit(CMP(result_dst, packed_consts, src_reg(0u),
+                  BRW_CONDITIONAL_NZ));
+         emit(AND(result_dst, result, src_reg(0x1)));
+      } else {
+         emit(MOV(result_dst, packed_consts));
+      }
+      break;
+   }
 
    case ir_quadop_vector:
       assert(!"not reached: should be handled by lower_quadop_vector");
@@ -1811,6 +1838,42 @@ vec4_visitor::visit(ir_texture *ir)
    /* Should be lowered by do_lower_texture_projection */
    assert(!ir->projector);
 
+   /* Generate code to compute all the subexpression trees.  This has to be
+    * done before loading any values into MRFs for the sampler message since
+    * generating these values may involve SEND messages that need the MRFs.
+    */
+   src_reg coordinate;
+   if (ir->coordinate) {
+      ir->coordinate->accept(this);
+      coordinate = this->result;
+   }
+
+   src_reg shadow_comparitor;
+   if (ir->shadow_comparitor) {
+      ir->shadow_comparitor->accept(this);
+      shadow_comparitor = this->result;
+   }
+
+   src_reg lod, dPdx, dPdy;
+   switch (ir->op) {
+   case ir_txf:
+   case ir_txl:
+   case ir_txs:
+      ir->lod_info.lod->accept(this);
+      lod = this->result;
+      break;
+   case ir_txd:
+      ir->lod_info.grad.dPdx->accept(this);
+      dPdx = this->result;
+
+      ir->lod_info.grad.dPdy->accept(this);
+      dPdy = this->result;
+      break;
+   case ir_tex:
+   case ir_txb:
+      break;
+   }
+
    vec4_instruction *inst = NULL;
    switch (ir->op) {
    case ir_tex:
@@ -1845,10 +1908,9 @@ vec4_visitor::visit(ir_texture *ir)
    int param_base = inst->base_mrf + inst->header_present;
 
    if (ir->op == ir_txs) {
-      ir->lod_info.lod->accept(this);
       int writemask = intel->gen == 4 ? WRITEMASK_W : WRITEMASK_X;
       emit(MOV(dst_reg(MRF, param_base, ir->lod_info.lod->type, writemask),
-	   this->result));
+	   lod));
    } else {
       int i, coord_mask = 0, zero_mask = 0;
       /* Load the coordinate */
@@ -1858,7 +1920,6 @@ vec4_visitor::visit(ir_texture *ir)
       for (; i < 4; i++)
 	 zero_mask |= (1 << i);
 
-      ir->coordinate->accept(this);
       if (ir->offset && ir->op == ir_txf) {
 	 /* It appears that the ld instruction used for txf does its
 	  * address bounds check before adding in the offset.  To work
@@ -1869,7 +1930,7 @@ vec4_visitor::visit(ir_texture *ir)
 	 assert(offset);
 
 	 for (int j = 0; j < ir->coordinate->type->vector_elements; j++) {
-	    src_reg src = this->result;
+	    src_reg src = coordinate;
 	    src.swizzle = BRW_SWIZZLE4(BRW_GET_SWZ(src.swizzle, j),
 				       BRW_GET_SWZ(src.swizzle, j),
 				       BRW_GET_SWZ(src.swizzle, j),
@@ -1879,16 +1940,15 @@ vec4_visitor::visit(ir_texture *ir)
 	 }
       } else {
 	 emit(MOV(dst_reg(MRF, param_base, ir->coordinate->type, coord_mask),
-		  this->result));
+		  coordinate));
       }
       emit(MOV(dst_reg(MRF, param_base, ir->coordinate->type, zero_mask),
 	       src_reg(0)));
       /* Load the shadow comparitor */
       if (ir->shadow_comparitor) {
-	 ir->shadow_comparitor->accept(this);
 	 emit(MOV(dst_reg(MRF, param_base + 1, ir->shadow_comparitor->type,
 			  WRITEMASK_X),
-		  this->result));
+		  shadow_comparitor));
 	 inst->mlen++;
       }
 
@@ -1908,20 +1968,12 @@ vec4_visitor::visit(ir_texture *ir)
 	    mrf = param_base;
 	    writemask = WRITEMASK_Z;
 	 }
-	 ir->lod_info.lod->accept(this);
-	 emit(MOV(dst_reg(MRF, mrf, ir->lod_info.lod->type, writemask),
-		  this->result));
+	 emit(MOV(dst_reg(MRF, mrf, ir->lod_info.lod->type, writemask), lod));
       } else if (ir->op == ir_txf) {
-	 ir->lod_info.lod->accept(this);
 	 emit(MOV(dst_reg(MRF, param_base, ir->lod_info.lod->type, WRITEMASK_W),
-		  this->result));
+		  lod));
       } else if (ir->op == ir_txd) {
 	 const glsl_type *type = ir->lod_info.grad.dPdx->type;
-
-	 ir->lod_info.grad.dPdx->accept(this);
-	 src_reg dPdx = this->result;
-	 ir->lod_info.grad.dPdy->accept(this);
-	 src_reg dPdy = this->result;
 
 	 if (intel->gen >= 5) {
 	    dPdx.swizzle = BRW_SWIZZLE4(SWIZZLE_X,SWIZZLE_X,SWIZZLE_Y,SWIZZLE_Y);
@@ -2218,6 +2270,17 @@ vec4_visitor::emit_urb_slot(int mrf, int vert_result)
          emit_clip_distances(hw_reg, (vert_result - VERT_RESULT_CLIP_DIST0) * 4);
       }
       break;
+   case VERT_RESULT_EDGE:
+      /* This is present when doing unfilled polygons.  We're supposed to copy
+       * the edge flag from the user-provided vertex array
+       * (glEdgeFlagPointer), or otherwise we'll copy from the current value
+       * of that attribute (starts as 1.0f).  This is then used in clipping to
+       * determine which edges should be drawn as wireframe.
+       */
+      current_annotation = "edge flag";
+      emit(MOV(reg, src_reg(dst_reg(ATTR, VERT_ATTRIB_EDGEFLAG,
+                                    glsl_type::float_type, WRITEMASK_XYZW))));
+      break;
    case BRW_VERT_RESULT_PAD:
       /* No need to write to this slot */
       break;
@@ -2273,8 +2336,6 @@ vec4_visitor::emit_urb_writes()
     * requirements for length alignment.
     */
    assert ((max_usable_mrf - base_mrf) % 2 == 0);
-
-   /* FINISHME: edgeflag */
 
    /* First mrf is the g0-based message header containing URB handles and such,
     * which is implied in VS_OPCODE_URB_WRITE.
@@ -2505,11 +2566,12 @@ vec4_visitor::emit_pull_constant_load(vec4_instruction *inst,
 				      int base_offset)
 {
    int reg_offset = base_offset + orig_src.reg_offset;
-   src_reg index = get_pull_constant_offset(inst, orig_src.reladdr, reg_offset);
+   src_reg index = src_reg((unsigned)SURF_INDEX_VERT_CONST_BUFFER);
+   src_reg offset = get_pull_constant_offset(inst, orig_src.reladdr, reg_offset);
    vec4_instruction *load;
 
    load = new(mem_ctx) vec4_instruction(this, VS_OPCODE_PULL_CONSTANT_LOAD,
-					temp, index);
+					temp, index, offset);
    load->base_mrf = 14;
    load->mlen = 1;
    emit_before(inst, load);

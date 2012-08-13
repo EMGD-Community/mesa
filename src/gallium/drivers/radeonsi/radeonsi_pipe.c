@@ -37,6 +37,7 @@
 #include "util/u_pack_color.h"
 #include "util/u_memory.h"
 #include "util/u_inlines.h"
+#include "util/u_simple_shaders.h"
 #include "util/u_upload_mgr.h"
 #include "vl/vl_decoder.h"
 #include "vl/vl_video_buffer.h"
@@ -47,6 +48,7 @@
 #include "r600_resource.h"
 #include "radeonsi_pipe.h"
 #include "r600_hw_context_priv.h"
+#include "si_state.h"
 
 /*
  * pipe_context
@@ -60,9 +62,9 @@ static struct r600_fence *r600_create_fence(struct r600_context *rctx)
 
 	if (!rscreen->fences.bo) {
 		/* Create the shared buffer object */
-		rscreen->fences.bo = (struct r600_resource*)
-			pipe_buffer_create(&rscreen->screen, PIPE_BIND_CUSTOM,
-					   PIPE_USAGE_STAGING, 4096);
+		rscreen->fences.bo = si_resource_create_custom(&rscreen->screen,
+							       PIPE_USAGE_STAGING,
+							       4096);
 		if (!rscreen->fences.bo) {
 			R600_ERR("r600: failed to create bo for fence objects\n");
 			goto out;
@@ -118,9 +120,8 @@ static struct r600_fence *r600_create_fence(struct r600_context *rctx)
 	r600_context_emit_fence(rctx, rscreen->fences.bo, fence->index, 1);
 
 	/* Create a dummy BO so that fence_finish without a timeout can sleep waiting for completion */
-	fence->sleep_bo = (struct r600_resource*)
-			pipe_buffer_create(&rctx->screen->screen, PIPE_BIND_CUSTOM,
-					   PIPE_USAGE_STAGING, 1);
+	fence->sleep_bo = si_resource_create_custom(&rctx->screen->screen, PIPE_USAGE_STAGING, 1);
+
 	/* Add the fence as a dummy relocation. */
 	r600_context_bo_reloc(rctx, fence->sleep_bo, RADEON_USAGE_READWRITE);
 
@@ -171,16 +172,13 @@ static void r600_destroy_context(struct pipe_context *context)
 {
 	struct r600_context *rctx = (struct r600_context *)context;
 
+	if (rctx->dummy_pixel_shader) {
+		rctx->context.delete_fs_state(&rctx->context, rctx->dummy_pixel_shader);
+	}
 	rctx->context.delete_depth_stencil_alpha_state(&rctx->context, rctx->custom_dsa_flush);
 	util_unreference_framebuffer_state(&rctx->framebuffer);
 
-	r600_context_fini(rctx);
-
 	util_blitter_destroy(rctx->blitter);
-
-	for (int i = 0; i < R600_PIPE_NSTATES; i++) {
-		free(rctx->states[i]);
-	}
 
 	if (rctx->uploader) {
 		u_upload_destroy(rctx->uploader);
@@ -212,7 +210,6 @@ static struct pipe_context *r600_create_context(struct pipe_screen *screen, void
 	r600_init_query_functions(rctx);
 	r600_init_context_resource_functions(rctx);
 	r600_init_surface_functions(rctx);
-	rctx->context.draw_vbo = r600_draw_vbo;
 
 	rctx->context.create_video_decoder = vl_create_decoder;
 	rctx->context.create_video_buffer = vl_video_buffer_create;
@@ -221,13 +218,12 @@ static struct pipe_context *r600_create_context(struct pipe_screen *screen, void
 
 	switch (rctx->chip_class) {
 	case TAHITI:
-		cayman_init_state_functions(rctx);
+		si_init_state_functions(rctx);
 		if (si_context_init(rctx)) {
 			r600_destroy_context(&rctx->context);
 			return NULL;
 		}
 		si_init_config(rctx);
-		rctx->custom_dsa_flush = cayman_create_db_flush_dsa(rctx);
 		break;
 	default:
 		R600_ERR("Unsupported chip class %d.\n", rctx->chip_class);
@@ -258,6 +254,12 @@ static struct pipe_context *r600_create_context(struct pipe_screen *screen, void
 	LIST_INITHEAD(&rctx->dirty_states);
 
 	r600_get_backend_mask(rctx); /* this emits commands and must be last */
+
+	rctx->dummy_pixel_shader =
+		util_make_fragment_cloneinput_shader(&rctx->context, 0,
+						     TGSI_SEMANTIC_GENERIC,
+						     TGSI_INTERPOLATE_CONSTANT);
+	rctx->context.bind_fs_state(&rctx->context, rctx->dummy_pixel_shader);
 
 	return &rctx->context;
 }
@@ -325,6 +327,7 @@ static int r600_get_param(struct pipe_screen* pscreen, enum pipe_cap param)
 	case PIPE_CAP_VERTEX_ELEMENT_SRC_OFFSET_4BYTE_ALIGNED_ONLY:
 	case PIPE_CAP_USER_INDEX_BUFFERS:
 	case PIPE_CAP_USER_CONSTANT_BUFFERS:
+	case PIPE_CAP_START_INSTANCE:
 		return 1;
 
 	case PIPE_CAP_CONSTANT_BUFFER_OFFSET_ALIGNMENT:
@@ -455,8 +458,9 @@ static int r600_get_shader_param(struct pipe_screen* pscreen, unsigned shader, e
 	case PIPE_SHADER_CAP_INDIRECT_OUTPUT_ADDR:
 	case PIPE_SHADER_CAP_INDIRECT_TEMP_ADDR:
 	case PIPE_SHADER_CAP_INDIRECT_CONST_ADDR:
-	case PIPE_SHADER_CAP_INTEGERS:
 		return 0;
+	case PIPE_SHADER_CAP_INTEGERS:
+		return 1;
 	case PIPE_SHADER_CAP_SUBROUTINES:
 		return 0;
 	case PIPE_SHADER_CAP_MAX_TEXTURE_SAMPLERS:
@@ -500,7 +504,7 @@ static void r600_destroy_screen(struct pipe_screen* pscreen)
 		}
 
 		rscreen->ws->buffer_unmap(rscreen->fences.bo->cs_buf);
-		pipe_resource_reference((struct pipe_resource**)&rscreen->fences.bo, NULL);
+		si_resource_reference(&rscreen->fences.bo, NULL);
 	}
 	pipe_mutex_destroy(rscreen->fences.mutex);
 
@@ -518,7 +522,7 @@ static void r600_fence_reference(struct pipe_screen *pscreen,
 	if (pipe_reference(&(*oldf)->reference, &newf->reference)) {
 		struct r600_screen *rscreen = (struct r600_screen *)pscreen;
 		pipe_mutex_lock(rscreen->fences.mutex);
-		pipe_resource_reference((struct pipe_resource**)&(*oldf)->sleep_bo, NULL);
+		si_resource_reference(&(*oldf)->sleep_bo, NULL);
 		LIST_ADDTAIL(&(*oldf)->head, &rscreen->fences.pool);
 		pipe_mutex_unlock(rscreen->fences.mutex);
 	}

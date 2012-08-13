@@ -20,18 +20,18 @@
 #include "llvm/ADT/BitVector.h"
 
 namespace llvm {
-  class AMDILSubtarget;
-  class AMDILAsmPrinter;
-  class AMDILPointerManager;
+  class AMDGPUSubtarget;
+  class AMDGPUAsmPrinter;
+  class AMDGPUPointerManager;
   class AsmPrinter;
   class MCStreamer;
 //===----------------------------------------------------------------------===//
 // Interface for data that is specific to a single device
 //===----------------------------------------------------------------------===//
-class AMDILDevice {
+class AMDGPUDevice {
 public:
-  AMDILDevice(AMDILSubtarget *ST);
-  virtual ~AMDILDevice();
+  AMDGPUDevice(AMDGPUSubtarget *ST);
+  virtual ~AMDGPUDevice();
 
   // Enum values for the various memory types.
   enum {
@@ -98,9 +98,9 @@ public:
   // software that emulates it with possibly using the hardware for
   // support since the hardware does not fully comply with OpenCL
   // specs.
-  bool isSupported(AMDILDeviceInfo::Caps Mode) const;
-  bool usesHardware(AMDILDeviceInfo::Caps Mode) const;
-  bool usesSoftware(AMDILDeviceInfo::Caps Mode) const;
+  bool isSupported(AMDGPUDeviceInfo::Caps Mode) const;
+  bool usesHardware(AMDGPUDeviceInfo::Caps Mode) const;
+  bool usesSoftware(AMDGPUDeviceInfo::Caps Mode) const;
   virtual std::string getDataLayout() const;
   static const unsigned int MAX_LDS_SIZE_700 = 16384;
   static const unsigned int MAX_LDS_SIZE_800 = 32768;
@@ -111,11 +111,11 @@ protected:
   virtual void setCaps();
   llvm::BitVector mHWBits;
   llvm::BitVector mSWBits;
-  AMDILSubtarget *mSTM;
+  AMDGPUSubtarget *mSTM;
   uint32_t mDeviceFlag;
 private:
-  AMDILDeviceInfo::ExecutionMode
-  getExecutionMode(AMDILDeviceInfo::Caps Caps) const;
+  AMDGPUDeviceInfo::ExecutionMode
+  getExecutionMode(AMDGPUDeviceInfo::Caps Caps) const;
 }; // AMDILDevice
 
 } // namespace llvm

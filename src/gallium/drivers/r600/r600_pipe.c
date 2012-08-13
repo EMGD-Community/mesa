@@ -197,7 +197,7 @@ static struct pipe_context *r600_create_context(struct pipe_screen *screen, void
 		return NULL;
 
 	util_slab_create(&rctx->pool_transfers,
-			 sizeof(struct pipe_transfer), 64,
+			 sizeof(struct r600_transfer), 64,
 			 UTIL_SLAB_SINGLETHREADED);
 
 	rctx->context.screen = screen;
@@ -215,7 +215,6 @@ static struct pipe_context *r600_create_context(struct pipe_screen *screen, void
 	LIST_INITHEAD(&rctx->active_timer_queries);
 	LIST_INITHEAD(&rctx->active_nontimer_queries);
 	LIST_INITHEAD(&rctx->dirty);
-	LIST_INITHEAD(&rctx->resource_dirty);
 	LIST_INITHEAD(&rctx->enable_list);
 
 	rctx->range = CALLOC(NUM_RANGES, sizeof(struct r600_range));
@@ -251,6 +250,7 @@ static struct pipe_context *r600_create_context(struct pipe_screen *screen, void
 	case CAYMAN:
 		evergreen_init_state_functions(rctx);
 		evergreen_init_atom_start_cs(rctx);
+		evergreen_init_atom_start_compute_cs(rctx);
 		if (evergreen_context_init(rctx))
 			goto fail;
 		rctx->custom_dsa_flush = evergreen_create_db_flush_dsa(rctx);
@@ -383,13 +383,15 @@ static int r600_get_param(struct pipe_screen* pscreen, enum pipe_cap param)
 	case PIPE_CAP_USER_INDEX_BUFFERS:
 	case PIPE_CAP_USER_CONSTANT_BUFFERS:
 	case PIPE_CAP_COMPUTE:
+	case PIPE_CAP_START_INSTANCE:
+	case PIPE_CAP_MAX_DUAL_SOURCE_RENDER_TARGETS:
 		return 1;
 
 	case PIPE_CAP_CONSTANT_BUFFER_OFFSET_ALIGNMENT:
 		return 256;
 
 	case PIPE_CAP_GLSL_FEATURE_LEVEL:
-		return rscreen->glsl_feature_level;
+		return 130;
 
 	/* Supported except the original R600. */
 	case PIPE_CAP_INDEP_BLEND_ENABLE:
@@ -410,13 +412,14 @@ static int r600_get_param(struct pipe_screen* pscreen, enum pipe_cap param)
 	case PIPE_CAP_FRAGMENT_COLOR_CLAMPED:
 	case PIPE_CAP_VERTEX_COLOR_CLAMPED:
 	case PIPE_CAP_USER_VERTEX_BUFFERS:
+	case PIPE_CAP_QUERY_TIMESTAMP:
 		return 0;
 
 	/* Stream output. */
 	case PIPE_CAP_MAX_STREAM_OUTPUT_BUFFERS:
-		return rscreen->info.r600_has_streamout ? 4 : 0;
+		return rscreen->has_streamout ? 4 : 0;
 	case PIPE_CAP_STREAM_OUTPUT_PAUSE_RESUME:
-		return rscreen->info.r600_has_streamout ? 1 : 0;
+		return rscreen->has_streamout ? 1 : 0;
 	case PIPE_CAP_MAX_STREAM_OUTPUT_SEPARATE_COMPONENTS:
 	case PIPE_CAP_MAX_STREAM_OUTPUT_INTERLEAVED_COMPONENTS:
 		return 16*4;
@@ -449,9 +452,6 @@ static int r600_get_param(struct pipe_screen* pscreen, enum pipe_cap param)
 
 	case PIPE_CAP_MAX_TEXEL_OFFSET:
 		return 7;
-
-	case PIPE_CAP_MAX_DUAL_SOURCE_RENDER_TARGETS:
-		return (family < CHIP_RV770) ?  1 : 0;
 	}
 	return 0;
 }
@@ -486,7 +486,6 @@ static float r600_get_paramf(struct pipe_screen* pscreen,
 
 static int r600_get_shader_param(struct pipe_screen* pscreen, unsigned shader, enum pipe_shader_cap param)
 {
-	struct r600_screen *rscreen = (struct r600_screen *)pscreen;
 	switch(shader)
 	{
 	case PIPE_SHADER_FRAGMENT:
@@ -536,7 +535,7 @@ static int r600_get_shader_param(struct pipe_screen* pscreen, unsigned shader, e
 	case PIPE_SHADER_CAP_SUBROUTINES:
 		return 0;
 	case PIPE_SHADER_CAP_INTEGERS:
-		return rscreen->glsl_feature_level >= 130;
+		return 1;
 	case PIPE_SHADER_CAP_MAX_TEXTURE_SAMPLERS:
 		return 16;
         case PIPE_SHADER_CAP_PREFERRED_IR:
@@ -621,9 +620,10 @@ static int r600_get_compute_param(struct pipe_screen *screen,
 	case PIPE_COMPUTE_CAP_MAX_GLOBAL_SIZE:
 		if (ret) {
 			uint64_t * max_global_size = ret;
-			/* XXX: This is what the proprietary driver reports, we
-			 * may want to use a different value. */
-			*max_global_size = 201326592;
+			/* XXX: This is 64kb for now until we get the
+			 * compute memory pool working correctly.
+			 */
+			*max_global_size = 1024 * 16 * 4;
 		}
 		return sizeof(uint64_t);
 
@@ -898,11 +898,18 @@ struct pipe_screen *r600_screen_create(struct radeon_winsys *ws)
 		rscreen->chip_class = R600;
 	}
 
-	/* XXX streamout is said to be broken on r700 and cayman */
-	if ((rscreen->chip_class == R700 ||
-	     rscreen->chip_class == CAYMAN) &&
-	    !debug_get_bool_option("R600_STREAMOUT", FALSE)) {
-		rscreen->info.r600_has_streamout = false;
+	/* Figure out streamout kernel support. */
+	switch (rscreen->chip_class) {
+	case R600:
+	case EVERGREEN:
+		rscreen->has_streamout = rscreen->info.drm_minor >= 14;
+		break;
+	case R700:
+		rscreen->has_streamout = rscreen->info.drm_minor >= 17;
+		break;
+	/* TODO: Cayman */
+	default:
+		rscreen->has_streamout = debug_get_bool_option("R600_STREAMOUT", FALSE);
 	}
 
 	if (r600_init_tiling(rscreen)) {
@@ -940,10 +947,7 @@ struct pipe_screen *r600_screen_create(struct radeon_winsys *ws)
 	LIST_INITHEAD(&rscreen->fences.blocks);
 	pipe_mutex_init(rscreen->fences.mutex);
 
-	rscreen->use_surface_alloc = debug_get_bool_option("R600_SURF", TRUE);
-	rscreen->glsl_feature_level = debug_get_bool_option("R600_GLSL130", TRUE) ? 130 : 120;
-
-	rscreen->global_pool = compute_memory_pool_new(1024*16, rscreen);
+	rscreen->global_pool = compute_memory_pool_new(rscreen);
 
 	return &rscreen->screen;
 }

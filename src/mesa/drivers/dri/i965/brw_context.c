@@ -138,7 +138,7 @@ brwCreateContext(int api,
     * So we need to override the Mesa default (which is based only on software
     * limits).
     */
-   ctx->Const.MaxTransformFeedbackSeparateAttribs = BRW_MAX_SOL_BUFFERS;
+   ctx->Const.MaxTransformFeedbackBuffers = BRW_MAX_SOL_BUFFERS;
 
    /* On Gen6, in the worst case, we use up one binding table entry per
     * transform feedback component (see comments above the definition of
@@ -154,13 +154,10 @@ brwCreateContext(int api,
    ctx->Const.MaxTransformFeedbackSeparateComponents =
       BRW_MAX_SOL_BINDINGS / BRW_MAX_SOL_BUFFERS;
 
-   /* Claim to support 4 multisamples, even though we don't.  This is a
-    * requirement for GL 3.0 that we missed until the last minute.  Go ahead and
-    * claim the limit, so that usage of the 4 multisample-based API that is
-    * guaranteed in 3.0 succeeds, even though we only rasterize a single sample.
-    */
-   if (intel->gen >= 6)
+   if (intel->gen == 6)
       ctx->Const.MaxSamples = 4;
+   else if (intel->gen >= 7)
+      ctx->Const.MaxSamples = 8;
 
    /* if conformance mode is set, swrast can handle any size AA point */
    ctx->Const.MaxPointSizeAA = 255.0;
@@ -241,14 +238,14 @@ brwCreateContext(int api,
    /* WM maximum threads is number of EUs times number of threads per EU. */
    if (intel->gen >= 7) {
       if (intel->gt == 1) {
-	 brw->max_wm_threads = 86;
+	 brw->max_wm_threads = 48;
 	 brw->max_vs_threads = 36;
 	 brw->max_gs_threads = 36;
 	 brw->urb.size = 128;
 	 brw->urb.max_vs_entries = 512;
 	 brw->urb.max_gs_entries = 192;
       } else if (intel->gt == 2) {
-	 brw->max_wm_threads = 86;
+	 brw->max_wm_threads = 172;
 	 brw->max_vs_threads = 128;
 	 brw->max_gs_threads = 128;
 	 brw->urb.size = 256;
@@ -259,11 +256,7 @@ brwCreateContext(int api,
       }
    } else if (intel->gen == 6) {
       if (intel->gt == 2) {
-	 /* This could possibly be 80, but is supposed to require
-	  * disabling of WIZ hashing (bit 6 of GT_MODE, 0x20d0) and a
-	  * GPU reset to change.
-	  */
-	 brw->max_wm_threads = 40;
+	 brw->max_wm_threads = 80;
 	 brw->max_vs_threads = 60;
 	 brw->max_gs_threads = 60;
 	 brw->urb.size = 64;            /* volume 5c.5 section 5.1 */
@@ -296,8 +289,13 @@ brwCreateContext(int api,
       brw->has_negative_rhw_bug = true;
    }
 
+   if (intel->gen <= 7) {
+      brw->needs_unlit_centroid_workaround = true;
+   }
+
    brw->prim_restart.in_progress = false;
    brw->prim_restart.enable_cut_index = false;
+   intel->hw_ctx = drm_intel_gem_context_create(intel->bufmgr);
 
    brw_init_state( brw );
 

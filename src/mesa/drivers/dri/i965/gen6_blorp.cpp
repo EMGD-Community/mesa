@@ -299,7 +299,6 @@ gen6_blorp_emit_blend_state(struct brw_context *brw,
 
    memset(blend, 0, sizeof(*blend));
 
-   // TODO: handle other formats.
    blend->blend1.pre_blend_clamp_enable = 1;
    blend->blend1.post_blend_clamp_enable = 1;
    blend->blend1.clamp_range = BRW_RENDERTARGET_CLAMPRANGE_FORMAT;
@@ -416,7 +415,7 @@ gen6_blorp_emit_surface_state(struct brw_context *brw,
    uint32_t wm_surf_offset;
    uint32_t width, height;
    surface->get_miplevel_dims(&width, &height);
-   if (surface->num_samples > 0) { /* TODO: seems clumsy */
+   if (surface->num_samples > 1) { /* TODO: seems clumsy */
       width /= 2;
       height /= 2;
    }
@@ -426,10 +425,6 @@ gen6_blorp_emit_surface_state(struct brw_context *brw,
    }
    struct intel_region *region = surface->mt->region;
 
-   /* TODO: handle other formats */
-   uint32_t format = surface->map_stencil_as_y_tiled
-      ? BRW_SURFACEFORMAT_R8_UNORM : BRW_SURFACEFORMAT_B8G8R8A8_UNORM;
-
    uint32_t *surf = (uint32_t *)
       brw_state_batch(brw, AUB_TRACE_SURFACE_STATE, 6 * 4, 32,
                       &wm_surf_offset);
@@ -437,7 +432,7 @@ gen6_blorp_emit_surface_state(struct brw_context *brw,
    surf[0] = (BRW_SURFACE_2D << BRW_SURFACE_TYPE_SHIFT |
               BRW_SURFACE_MIPMAPLAYOUT_BELOW << BRW_SURFACE_MIPLAYOUT_SHIFT |
               BRW_SURFACE_CUBEFACE_ENABLES |
-              format << BRW_SURFACE_FORMAT_SHIFT);
+              surface->brw_surfaceformat << BRW_SURFACE_FORMAT_SHIFT);
 
    /* reloc */
    surf[1] = region->bo->offset; /* No tile offsets needed */
@@ -690,7 +685,7 @@ gen6_blorp_emit_sf_config(struct brw_context *brw,
              1 << GEN6_SF_URB_ENTRY_READ_LENGTH_SHIFT |
              0 << GEN6_SF_URB_ENTRY_READ_OFFSET_SHIFT);
    OUT_BATCH(0); /* dw2 */
-   OUT_BATCH(params->num_samples > 0 ? GEN6_SF_MSRAST_ON_PATTERN : 0);
+   OUT_BATCH(params->num_samples > 1 ? GEN6_SF_MSRAST_ON_PATTERN : 0);
    for (int i = 0; i < 16; ++i)
       OUT_BATCH(0);
    ADVANCE_BATCH();
@@ -749,7 +744,7 @@ gen6_blorp_emit_wm_config(struct brw_context *brw,
       dw5 |= GEN6_WM_DISPATCH_ENABLE; /* We are rendering */
    }
 
-   if (params->num_samples > 0) {
+   if (params->num_samples > 1) {
       dw6 |= GEN6_WM_MSRAST_ON_PATTERN;
       if (prog_data && prog_data->persample_msaa_dispatch)
          dw6 |= GEN6_WM_MSDISPMODE_PERSAMPLE;
@@ -1046,7 +1041,7 @@ gen6_blorp_exec(struct intel_context *intel,
    uint32_t prog_offset = params->get_wm_prog(brw, &prog_data);
    gen6_blorp_emit_batch_head(brw, params);
    gen6_emit_3dstate_multisample(brw, params->num_samples);
-   gen6_emit_3dstate_sample_mask(brw, params->num_samples);
+   gen6_emit_3dstate_sample_mask(brw, params->num_samples, 1.0, false);
    gen6_blorp_emit_state_base_address(brw, params);
    gen6_blorp_emit_vertices(brw, params);
    gen6_blorp_emit_urb_config(brw, params);

@@ -92,7 +92,7 @@ type_to_bit(const struct gl_context *ctx, GLenum type)
    case GL_DOUBLE:
       return DOUBLE_BIT;
    case GL_FIXED:
-      return ctx->API == API_OPENGL ? FIXED_GL_BIT : FIXED_ES_BIT;
+      return _mesa_is_desktop_gl(ctx) ? FIXED_GL_BIT : FIXED_ES_BIT;
    case GL_UNSIGNED_INT_2_10_10_10_REV:
       return UNSIGNED_INT_2_10_10_10_REV_BIT;
    case GL_INT_2_10_10_10_REV:
@@ -568,7 +568,7 @@ get_vertex_array_attrib(struct gl_context *ctx, GLuint index, GLenum pname,
    case GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING_ARB:
       return array->BufferObj->Name;
    case GL_VERTEX_ATTRIB_ARRAY_INTEGER:
-      if (ctx->VersionMajor >= 3 || ctx->Extensions.EXT_gpu_shader4) {
+      if (ctx->Version >= 30 || ctx->Extensions.EXT_gpu_shader4) {
          return array->Integer;
       }
       goto error;
@@ -1092,8 +1092,7 @@ _mesa_PrimitiveRestartIndex(GLuint index)
 {
    GET_CURRENT_CONTEXT(ctx);
 
-   if (!ctx->Extensions.NV_primitive_restart &&
-       ctx->VersionMajor * 10 + ctx->VersionMinor < 31) {
+   if (!ctx->Extensions.NV_primitive_restart && ctx->Version < 31) {
       _mesa_error(ctx, GL_INVALID_OPERATION, "glPrimitiveRestartIndexNV()");
       return;
    }

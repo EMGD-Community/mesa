@@ -106,6 +106,7 @@
 #define PKT3_SET_RESOURCE                      0x6D
 #define PKT3_SET_SAMPLER                       0x6E
 #define PKT3_SET_CTL_CONST                     0x6F
+#define PKT3_STRMOUT_BASE_UPDATE	       0x72
 #define PKT3_SURFACE_BASE_UPDATE               0x73
 #define		SURFACE_BASE_UPDATE_DEPTH      (1 << 0)
 #define		SURFACE_BASE_UPDATE_COLOR(x)   (2 << (x))
@@ -417,6 +418,8 @@
 #define   G_028808_DEGAMMA_ENABLE(x)                   (((x) >> 3) & 0x1)
 #define   C_028808_DEGAMMA_ENABLE                      0xFFFFFFF7
 #define   S_028808_SPECIAL_OP(x)                       (((x) & 0x7) << 4)
+#define		V_028808_NORMAL				0
+#define		V_028808_DISABLE			1
 #define   G_028808_SPECIAL_OP(x)                       (((x) >> 4) & 0x7)
 #define   C_028808_SPECIAL_OP                          0xFFFFFF8F
 #define   S_028808_PER_MRT_BLEND(x)                    (((x) & 0x1) << 7)

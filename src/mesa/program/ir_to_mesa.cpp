@@ -334,7 +334,7 @@ dst_reg address_reg = dst_reg(PROGRAM_ADDRESS, WRITEMASK_X);
 static int
 swizzle_for_size(int size)
 {
-   int size_swizzles[4] = {
+   static const int size_swizzles[4] = {
       MAKE_SWIZZLE4(SWIZZLE_X, SWIZZLE_X, SWIZZLE_X, SWIZZLE_X),
       MAKE_SWIZZLE4(SWIZZLE_X, SWIZZLE_Y, SWIZZLE_Y, SWIZZLE_Y),
       MAKE_SWIZZLE4(SWIZZLE_X, SWIZZLE_Y, SWIZZLE_Z, SWIZZLE_Z),
@@ -1400,12 +1400,18 @@ ir_to_mesa_visitor::visit(ir_expression *ir)
       result_src = op[0];
       break;
    case ir_unop_f2i:
+   case ir_unop_f2u:
       emit(ir, OPCODE_TRUNC, result_dst, op[0]);
       break;
    case ir_unop_f2b:
    case ir_unop_i2b:
       emit(ir, OPCODE_SNE, result_dst,
 			  op[0], src_reg_for_float(0.0));
+      break;
+   case ir_unop_bitcast_f2i: // Ignore these 4, they can't happen here anyway
+   case ir_unop_bitcast_f2u:
+   case ir_unop_bitcast_i2f:
+   case ir_unop_bitcast_u2f:
       break;
    case ir_unop_trunc:
       emit(ir, OPCODE_TRUNC, result_dst, op[0]);
@@ -1448,6 +1454,10 @@ ir_to_mesa_visitor::visit(ir_expression *ir)
    case ir_unop_bit_not:
    case ir_unop_round_even:
       emit(ir, OPCODE_MOV, result_dst, op[0]);
+      break;
+
+   case ir_binop_ubo_load:
+      assert(!"not supported");
       break;
 
    case ir_quadop_vector:
@@ -2151,8 +2161,6 @@ ir_to_mesa_visitor::visit(ir_return *ir)
 void
 ir_to_mesa_visitor::visit(ir_discard *ir)
 {
-   struct gl_fragment_program *fp = (struct gl_fragment_program *)this->prog;
-
    if (ir->condition) {
       ir->condition->accept(this);
       this->result.negate = ~this->result.negate;
@@ -2160,8 +2168,6 @@ ir_to_mesa_visitor::visit(ir_discard *ir)
    } else {
       emit(ir, OPCODE_KIL_NV);
    }
-
-   fp->UsesKill = GL_TRUE;
 }
 
 void
@@ -2453,7 +2459,7 @@ _mesa_generate_parameters_list_for_uniforms(struct gl_shader_program
       ir_variable *var = ((ir_instruction *) node)->as_variable();
 
       if ((var == NULL) || (var->mode != ir_var_uniform)
-	  || (strncmp(var->name, "gl_", 3) == 0))
+	  || var->uniform_block != -1 || (strncmp(var->name, "gl_", 3) == 0))
 	 continue;
 
       add.process(var);
@@ -3112,6 +3118,12 @@ _mesa_glsl_compile_shader(struct gl_context *ctx, struct gl_shader *shader)
 	 printf("%s\n", shader->InfoLog);
       }
    }
+
+   if (shader->UniformBlocks)
+      ralloc_free(shader->UniformBlocks);
+   shader->NumUniformBlocks = state->num_uniform_blocks;
+   shader->UniformBlocks = state->uniform_blocks;
+   ralloc_steal(shader, shader->UniformBlocks);
 
    /* Retain any live IR, but trash the rest. */
    reparent_ir(shader->ir, shader->ir);

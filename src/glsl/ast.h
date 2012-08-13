@@ -338,6 +338,25 @@ enum {
 };
 
 struct ast_type_qualifier {
+   /* Callers of this ralloc-based new need not call delete. It's
+    * easier to just ralloc_free 'ctx' (or any of its ancestors). */
+   static void* operator new(size_t size, void *ctx)
+   {
+      void *node;
+
+      node = rzalloc_size(ctx, size);
+      assert(node != NULL);
+
+      return node;
+   }
+
+   /* If the user *does* call delete, that's OK, we will just
+    * ralloc_free in that case. */
+   static void operator delete(void *table)
+   {
+      ralloc_free(table);
+   }
+
    union {
       struct {
 	 unsigned invariant:1;
@@ -376,6 +395,15 @@ struct ast_type_qualifier {
          unsigned depth_less:1;
          unsigned depth_unchanged:1;
          /** \} */
+
+	 /** \name Layout qualifiers for GL_ARB_uniform_buffer_object */
+	 /** \{ */
+         unsigned std140:1;
+         unsigned shared:1;
+         unsigned packed:1;
+         unsigned column_major:1;
+         unsigned row_major:1;
+	 /** \} */
       }
       /** \brief Set of flags, accessed by name. */
       q;
@@ -415,17 +443,25 @@ struct ast_type_qualifier {
     * returned string is undefined but not null.
     */
    const char *interpolation_string() const;
+
+   bool merge_qualifier(YYLTYPE *loc,
+			_mesa_glsl_parse_state *state,
+			ast_type_qualifier q);
 };
+
+class ast_declarator_list;
 
 class ast_struct_specifier : public ast_node {
 public:
-   ast_struct_specifier(const char *identifier, ast_node *declarator_list);
+   ast_struct_specifier(const char *identifier,
+			ast_declarator_list *declarator_list);
    virtual void print(void) const;
 
    virtual ir_rvalue *hir(exec_list *instructions,
 			  struct _mesa_glsl_parse_state *state);
 
    const char *name;
+   /* List of ast_declarator_list * */
    exec_list declarations;
 };
 
@@ -500,6 +536,12 @@ public:
     * is used to note these cases when no type is specified.
     */
    int invariant;
+
+   /**
+    * Flag indicating that these declarators are in a uniform block,
+    * allowing UBO type qualifiers.
+    */
+   bool ubo_qualifiers_valid;
 };
 
 
@@ -757,6 +799,25 @@ public:
 
    ast_function *prototype;
    ast_compound_statement *body;
+};
+
+class ast_uniform_block : public ast_node {
+public:
+   ast_uniform_block(ast_type_qualifier layout,
+		     const char *block_name,
+		     ast_declarator_list *member_list)
+   : layout(layout), block_name(block_name)
+   {
+      declarations.push_degenerate_list_at_head(&member_list->link);
+   }
+
+   virtual ir_rvalue *hir(exec_list *instructions,
+			  struct _mesa_glsl_parse_state *state);
+
+   ast_type_qualifier layout;
+   const char *block_name;
+   /** List of ast_declarator_list * */
+   exec_list declarations;
 };
 /*@}*/
 

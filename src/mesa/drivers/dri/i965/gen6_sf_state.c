@@ -122,9 +122,7 @@ upload_sf_state(struct brw_context *brw)
    int i;
    /* _NEW_BUFFER */
    bool render_to_fbo = _mesa_is_user_fbo(brw->intel.ctx.DrawBuffer);
-   bool multisampled = false;
-   if (ctx->DrawBuffer->_ColorDrawBuffers[0])
-      multisampled = ctx->DrawBuffer->_ColorDrawBuffers[0]->NumSamples > 0;
+   bool multisampled_fbo = ctx->DrawBuffer->Visual.samples > 1;
 
    int attr = 0, input_index = 0;
    int urb_entry_read_offset = 1;
@@ -242,7 +240,8 @@ upload_sf_state(struct brw_context *brw)
       dw3 |= GEN6_SF_LINE_AA_MODE_TRUE;
       dw3 |= GEN6_SF_LINE_END_CAP_WIDTH_1_0;
    }
-   if (multisampled)
+   /* _NEW_MULTISAMPLE */
+   if (multisampled_fbo && ctx->Multisample.Enabled)
       dw3 |= GEN6_SF_MSRAST_ON_PATTERN;
 
    /* _NEW_PROGRAM | _NEW_POINT */
@@ -349,7 +348,8 @@ const struct brw_tracked_state gen6_sf_state = {
 		_NEW_LINE |
 		_NEW_SCISSOR |
 		_NEW_BUFFERS |
-		_NEW_POINT),
+		_NEW_POINT |
+                _NEW_MULTISAMPLE),
       .brw   = (BRW_NEW_CONTEXT |
 		BRW_NEW_FRAGMENT_PROGRAM),
       .cache = CACHE_NEW_VS_PROG

@@ -17,9 +17,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "AMDGPU.h"
+#include "AMDGPUCodeEmitter.h"
 #include "AMDGPUUtil.h"
-#include "AMDILCodeEmitter.h"
-#include "AMDILInstrInfo.h"
+#include "AMDGPUInstrInfo.h"
 #include "AMDILUtilityFunctions.h"
 #include "R600InstrInfo.h"
 #include "R600RegisterInfo.h"
@@ -39,7 +39,7 @@ using namespace llvm;
 
 namespace {
 
-class R600CodeEmitter : public MachineFunctionPass, public AMDILCodeEmitter {
+class R600CodeEmitter : public MachineFunctionPass, public AMDGPUCodeEmitter {
 
 private:
 
@@ -49,19 +49,19 @@ private:
   const MachineRegisterInfo * MRI;
   const R600RegisterInfo * TRI;
 
-  bool isCube;
-  bool isReduction;
-  bool isVector;
+  bool IsCube;
+  bool IsReduction;
+  bool IsVector;
   unsigned currentElement;
-  bool isLast;
+  bool IsLast;
 
   unsigned section_start;
 
 public:
 
   R600CodeEmitter(formatted_raw_ostream &OS) : MachineFunctionPass(ID),
-      _OS(OS), TM(NULL), isCube(false), isReduction(false), isVector(false),
-      isLast(true) { }
+      _OS(OS), TM(NULL), IsCube(false), IsReduction(false), IsVector(false),
+      IsLast(true) { }
 
   const char *getPassName() const { return "AMDGPU Machine Code Emitter"; }
 
@@ -71,21 +71,21 @@ public:
 
 private:
 
-  void emitALUInstr(MachineInstr  &MI);
-  void emitSrc(const MachineOperand & MO, int chan_override  = -1);
-  void emitDst(const MachineOperand & MO);
-  void emitALU(MachineInstr &MI, unsigned numSrc);
-  void emitTexInstr(MachineInstr &MI);
-  void emitFCInstr(MachineInstr &MI);
+  void EmitALUInstr(MachineInstr  &MI);
+  void EmitSrc(const MachineOperand & MO, int chan_override  = -1);
+  void EmitDst(const MachineOperand & MO);
+  void EmitALU(MachineInstr &MI, unsigned numSrc);
+  void EmitTexInstr(MachineInstr &MI);
+  void EmitFCInstr(MachineInstr &MI);
 
-  void emitNullBytes(unsigned int byteCount);
+  void EmitNullBytes(unsigned int byteCount);
 
-  void emitByte(unsigned int byte);
+  void EmitByte(unsigned int byte);
 
-  void emitTwoBytes(uint32_t bytes);
+  void EmitTwoBytes(uint32_t bytes);
 
-  void emit(uint32_t value);
-  void emit(uint64_t value);
+  void Emit(uint32_t value);
+  void Emit(uint64_t value);
 
   unsigned getHWReg(unsigned regNo) const;
 
@@ -110,6 +110,7 @@ enum InstrTypes {
 
 enum FCInstr {
   FC_IF = 0,
+  FC_IF_INT,
   FC_ELSE,
   FC_ENDIF,
   FC_BGNLOOP,
@@ -147,7 +148,7 @@ bool R600CodeEmitter::runOnMachineFunction(MachineFunction &MF) {
   MRI = &MF.getRegInfo();
   TRI = static_cast<const R600RegisterInfo *>(TM->getRegisterInfo());
   const R600InstrInfo * TII = static_cast<const R600InstrInfo *>(TM->getInstrInfo());
-  const AMDILSubtarget &STM = TM->getSubtarget<AMDILSubtarget>();
+  const AMDGPUSubtarget &STM = TM->getSubtarget<AMDGPUSubtarget>();
   std::string gpu = STM.getDeviceName();
 
   if (STM.dumpCode()) {
@@ -160,34 +161,34 @@ bool R600CodeEmitter::runOnMachineFunction(MachineFunction &MF) {
      for (MachineBasicBlock::iterator I = MBB.begin(), E = MBB.end();
                                                        I != E; ++I) {
           MachineInstr &MI = *I;
-	  isReduction = AMDGPU::isReductionOp(MI.getOpcode());
-	  isVector = TII->isVector(MI);
-	  isCube = AMDGPU::isCubeOp(MI.getOpcode());
+	  IsReduction = AMDGPU::isReductionOp(MI.getOpcode());
+	  IsVector = TII->isVector(MI);
+	  IsCube = AMDGPU::isCubeOp(MI.getOpcode());
           if (MI.getNumOperands() > 1 && MI.getOperand(0).isReg() && MI.getOperand(0).isDead()) {
             continue;
           }
           if (AMDGPU::isTexOp(MI.getOpcode())) {
-            emitTexInstr(MI);
+            EmitTexInstr(MI);
           } else if (AMDGPU::isFCOp(MI.getOpcode())){
-            emitFCInstr(MI);
-          } else if (isReduction || isVector || isCube) {
-            isLast = false;
+            EmitFCInstr(MI);
+          } else if (IsReduction || IsVector || IsCube) {
+            IsLast = false;
             // XXX: On Cayman, some (all?) of the vector instructions only need
             // to fill the first three slots.
             for (currentElement = 0; currentElement < 4; currentElement++) {
-              isLast = (currentElement == 3);
-              emitALUInstr(MI);
+              IsLast = (currentElement == 3);
+              EmitALUInstr(MI);
             }
-            isReduction = false;
-	    isVector = false;
-	    isCube = false;
-          } else if (MI.getOpcode() == AMDIL::RETURN ||
-                     MI.getOpcode() == AMDIL::BUNDLE ||
-                     MI.getOpcode() == AMDIL::KILL) {
+            IsReduction = false;
+	    IsVector = false;
+	    IsCube = false;
+          } else if (MI.getOpcode() == AMDGPU::RETURN ||
+                     MI.getOpcode() == AMDGPU::BUNDLE ||
+                     MI.getOpcode() == AMDGPU::KILL) {
             continue;
           } else {
             switch(MI.getOpcode()) {
-            case AMDIL::RAT_WRITE_CACHELESS_eg:
+            case AMDGPU::RAT_WRITE_CACHELESS_eg:
               {
                   uint64_t inst = getBinaryCodeForInstr(MI);
                 // Set End Of Program bit
@@ -196,75 +197,31 @@ bool R600CodeEmitter::runOnMachineFunction(MachineFunction &MF) {
                 // set in a prior pass.
                 MachineBasicBlock::iterator NextI = llvm::next(I);
                 MachineInstr &NextMI = *NextI;
-                if (NextMI.getOpcode() == AMDIL::RETURN) {
+                if (NextMI.getOpcode() == AMDGPU::RETURN) {
                   inst |= (((uint64_t)1) << 53);
                 }
-                emitByte(INSTR_NATIVE);
-                emit(inst);
+                EmitByte(INSTR_NATIVE);
+                Emit(inst);
                 break;
               }
-            case AMDIL::VTX_READ_PARAM_eg:
-            case AMDIL::VTX_READ_GLOBAL_eg:
+            case AMDGPU::VTX_READ_PARAM_i32_eg:
+            case AMDGPU::VTX_READ_PARAM_f32_eg:
+            case AMDGPU::VTX_READ_GLOBAL_i32_eg:
+            case AMDGPU::VTX_READ_GLOBAL_f32_eg:
+            case AMDGPU::VTX_READ_GLOBAL_v4i32_eg:
+            case AMDGPU::VTX_READ_GLOBAL_v4f32_eg:
               {
-                emitByte(INSTR_VTX);
-                // inst
-                emitByte(0);
+                uint64_t InstWord01 = getBinaryCodeForInstr(MI);
+                uint32_t InstWord2 = MI.getOperand(2).getImm(); // Offset
 
-                // fetch_type
-                emitByte(2);
-
-                // buffer_id
-                emitByte(MI.getOpcode() == AMDIL::VTX_READ_PARAM_eg ? 0 : 1);
-
-                // src_gpr
-                emitByte(getHWReg(MI.getOperand(1).getReg()));
-
-                // src_sel_x
-                emitByte(TRI->getHWRegChan(MI.getOperand(1).getReg()));
-
-                // mega_fetch_count
-                emitByte(3);
-
-                // dst_gpr
-                emitByte(getHWReg(MI.getOperand(0).getReg()));
-
-                // dst_sel_x
-                emitByte(0);
-
-                // dst_sel_y
-                emitByte(7);
-
-                // dst_sel_z
-                emitByte(7);
-
-                // dst_sel_w
-                emitByte(7);
-
-                // use_const_fields
-                emitByte(1);
-
-                // data_format
-                emitByte(0);
-
-                // num_format_all
-                emitByte(0);
-
-                // format_comp_all
-                emitByte(0);
-
-                // srf_mode_all
-                emitByte(0);
-
-                // offset
-                emitTwoBytes(MI.getOperand(2).getImm());
-
-                // endian
-                emitByte(0);
+                EmitByte(INSTR_VTX);
+                Emit(InstWord01);
+                Emit(InstWord2);
                 break;
               }
 
             default:
-              emitALUInstr(MI);
+              EmitALUInstr(MI);
               break;
           }
         }
@@ -273,7 +230,7 @@ bool R600CodeEmitter::runOnMachineFunction(MachineFunction &MF) {
   return false;
 }
 
-void R600CodeEmitter::emitALUInstr(MachineInstr &MI)
+void R600CodeEmitter::EmitALUInstr(MachineInstr &MI)
 {
 
   unsigned numOperands = MI.getNumExplicitOperands();
@@ -291,13 +248,13 @@ void R600CodeEmitter::emitALUInstr(MachineInstr &MI)
   const MachineOperand dstOp = MI.getOperand(0);
 
   // Emit instruction type
-  emitByte(0);
+  EmitByte(0);
 
-  if (isCube) {
+  if (IsCube) {
     static const int cube_src_swz[] = {2, 2, 0, 1};
-    emitSrc(MI.getOperand(1), cube_src_swz[currentElement]);
-    emitSrc(MI.getOperand(1), cube_src_swz[3-currentElement]);
-    emitNullBytes(SRC_BYTE_COUNT);
+    EmitSrc(MI.getOperand(1), cube_src_swz[currentElement]);
+    EmitSrc(MI.getOperand(1), cube_src_swz[3-currentElement]);
+    EmitNullBytes(SRC_BYTE_COUNT);
   } else {
     unsigned int opIndex;
     for (opIndex = 1; opIndex < numOperands; opIndex++) {
@@ -305,21 +262,21 @@ void R600CodeEmitter::emitALUInstr(MachineInstr &MI)
       if (MI.getOperand(opIndex).isImm() || MI.getOperand(opIndex).isFPImm()) {
         break;
       }
-      emitSrc(MI.getOperand(opIndex));
+      EmitSrc(MI.getOperand(opIndex));
     }
 
     // Emit zeros for unused sources
     for ( ; opIndex < 4; opIndex++) {
-      emitNullBytes(SRC_BYTE_COUNT);
+      EmitNullBytes(SRC_BYTE_COUNT);
     }
   }
 
-  emitDst(dstOp);
+  EmitDst(dstOp);
 
-  emitALU(MI, numOperands - 1);
+  EmitALU(MI, numOperands - 1);
 }
 
-void R600CodeEmitter::emitSrc(const MachineOperand & MO, int chan_override)
+void R600CodeEmitter::EmitSrc(const MachineOperand & MO, int chan_override)
 {
   uint32_t value = 0;
   // Emit the source select (2 bytes).  For GPRs, this is the register index.
@@ -327,8 +284,8 @@ void R600CodeEmitter::emitSrc(const MachineOperand & MO, int chan_override)
   // value of the source select is defined in the r600isa docs.
   if (MO.isReg()) {
     unsigned reg = MO.getReg();
-    emitTwoBytes(getHWReg(reg));
-    if (reg == AMDIL::ALU_LITERAL_X) {
+    EmitTwoBytes(getHWReg(reg));
+    if (reg == AMDGPU::ALU_LITERAL_X) {
       const MachineInstr * parent = MO.getParent();
       unsigned immOpIndex = parent->getNumExplicitOperands() - 1;
       MachineOperand immOp = parent->getOperand(immOpIndex);
@@ -341,160 +298,160 @@ void R600CodeEmitter::emitSrc(const MachineOperand & MO, int chan_override)
     }
   } else {
     // XXX: Handle other operand types.
-    emitTwoBytes(0);
+    EmitTwoBytes(0);
   }
 
   // Emit the source channel (1 byte)
   if (chan_override != -1) {
-    emitByte(chan_override);
-  } else if (isReduction) {
-    emitByte(currentElement);
+    EmitByte(chan_override);
+  } else if (IsReduction) {
+    EmitByte(currentElement);
   } else if (MO.isReg()) {
-    emitByte(TRI->getHWRegChan(MO.getReg()));
+    EmitByte(TRI->getHWRegChan(MO.getReg()));
   } else {
-    emitByte(0);
+    EmitByte(0);
   }
 
   // XXX: Emit isNegated (1 byte)
   if ((!(MO.getTargetFlags() & MO_FLAG_ABS))
       && (MO.getTargetFlags() & MO_FLAG_NEG ||
      (MO.isReg() &&
-      (MO.getReg() == AMDIL::NEG_ONE || MO.getReg() == AMDIL::NEG_HALF)))){
-    emitByte(1);
+      (MO.getReg() == AMDGPU::NEG_ONE || MO.getReg() == AMDGPU::NEG_HALF)))){
+    EmitByte(1);
   } else {
-    emitByte(0);
+    EmitByte(0);
   }
 
   // Emit isAbsolute (1 byte)
   if (MO.getTargetFlags() & MO_FLAG_ABS) {
-    emitByte(1);
+    EmitByte(1);
   } else {
-    emitByte(0);
+    EmitByte(0);
   }
 
   // XXX: Emit relative addressing mode (1 byte)
-  emitByte(0);
+  EmitByte(0);
 
   // Emit kc_bank, This will be adjusted later by r600_asm
-  emitByte(0);
+  EmitByte(0);
 
   // Emit the literal value, if applicable (4 bytes).
-  emit(value);
+  Emit(value);
 
 }
 
-void R600CodeEmitter::emitDst(const MachineOperand & MO)
+void R600CodeEmitter::EmitDst(const MachineOperand & MO)
 {
   if (MO.isReg()) {
     // Emit the destination register index (1 byte)
-    emitByte(getHWReg(MO.getReg()));
+    EmitByte(getHWReg(MO.getReg()));
 
     // Emit the element of the destination register (1 byte)
-    if (isReduction || isCube || isVector) {
-      emitByte(currentElement);
+    if (IsReduction || IsCube || IsVector) {
+      EmitByte(currentElement);
     } else {
-      emitByte(TRI->getHWRegChan(MO.getReg()));
+      EmitByte(TRI->getHWRegChan(MO.getReg()));
     }
 
     // Emit isClamped (1 byte)
     if (MO.getTargetFlags() & MO_FLAG_CLAMP) {
-      emitByte(1);
+      EmitByte(1);
     } else {
-      emitByte(0);
+      EmitByte(0);
     }
 
     // Emit writemask (1 byte).
-    if (((isReduction || isVector) &&
+    if (((IsReduction || IsVector) &&
           currentElement != TRI->getHWRegChan(MO.getReg()))
        || MO.getTargetFlags() & MO_FLAG_MASK) {
-      emitByte(0);
+      EmitByte(0);
     } else {
-      emitByte(1);
+      EmitByte(1);
     }
 
     // XXX: Emit relative addressing mode
-    emitByte(0);
+    EmitByte(0);
   } else {
     // XXX: Handle other operand types.  Are there any for destination regs?
-    emitNullBytes(DST_BYTE_COUNT);
+    EmitNullBytes(DST_BYTE_COUNT);
   }
 }
 
-void R600CodeEmitter::emitALU(MachineInstr &MI, unsigned numSrc)
+void R600CodeEmitter::EmitALU(MachineInstr &MI, unsigned numSrc)
 {
   // Emit the instruction (2 bytes)
-  emitTwoBytes(getBinaryCodeForInstr(MI));
+  EmitTwoBytes(getBinaryCodeForInstr(MI));
 
-  // Emit isLast (for this instruction group) (1 byte)
-  if (isLast) {
-    emitByte(1);
+  // Emit IsLast (for this instruction group) (1 byte)
+  if (IsLast) {
+    EmitByte(1);
   } else {
-    emitByte(0);
+    EmitByte(0);
   }
   // Emit isOp3 (1 byte)
   if (numSrc == 3) {
-    emitByte(1);
+    EmitByte(1);
   } else {
-    emitByte(0);
+    EmitByte(0);
   }
 
   // XXX: Emit predicate (1 byte)
-  emitByte(0);
+  EmitByte(0);
 
   // XXX: Emit bank swizzle. (1 byte)  Do we need this?  It looks like
   // r600_asm.c sets it.
-  emitByte(0);
+  EmitByte(0);
 
   // XXX: Emit bank_swizzle_force (1 byte) Not sure what this is for.
-  emitByte(0);
+  EmitByte(0);
 
   // XXX: Emit OMOD (1 byte) Not implemented.
-  emitByte(0);
+  EmitByte(0);
 
   // XXX: Emit index_mode.  I think this is for indirect addressing, so we
   // don't need to worry about it.
-  emitByte(0);
+  EmitByte(0);
 }
 
-void R600CodeEmitter::emitTexInstr(MachineInstr &MI)
+void R600CodeEmitter::EmitTexInstr(MachineInstr &MI)
 {
 
   unsigned opcode = MI.getOpcode();
-  bool hasOffsets = (opcode == AMDIL::TEX_LD);
+  bool hasOffsets = (opcode == AMDGPU::TEX_LD);
   unsigned op_offset = hasOffsets ? 3 : 0;
   int64_t sampler = MI.getOperand(op_offset+2).getImm();
   int64_t textureType = MI.getOperand(op_offset+3).getImm();
   unsigned srcSelect[4] = {0, 1, 2, 3};
 
   // Emit instruction type
-  emitByte(1);
+  EmitByte(1);
 
   // Emit instruction
-  emitByte(getBinaryCodeForInstr(MI));
+  EmitByte(getBinaryCodeForInstr(MI));
 
   // XXX: Emit resource id r600_shader.c uses sampler + 1.  Why?
-  emitByte(sampler + 1 + 1);
+  EmitByte(sampler + 1 + 1);
 
   // Emit source register
-  emitByte(getHWReg(MI.getOperand(1).getReg()));
+  EmitByte(getHWReg(MI.getOperand(1).getReg()));
 
   // XXX: Emit src isRelativeAddress
-  emitByte(0);
+  EmitByte(0);
 
   // Emit destination register
-  emitByte(getHWReg(MI.getOperand(0).getReg()));
+  EmitByte(getHWReg(MI.getOperand(0).getReg()));
 
   // XXX: Emit dst isRealtiveAddress
-  emitByte(0);
+  EmitByte(0);
 
   // XXX: Emit dst select
-  emitByte(0); // X
-  emitByte(1); // Y
-  emitByte(2); // Z
-  emitByte(3); // W
+  EmitByte(0); // X
+  EmitByte(1); // Y
+  EmitByte(2); // Z
+  EmitByte(3); // W
 
   // XXX: Emit lod bias
-  emitByte(0);
+  EmitByte(0);
 
   // XXX: Emit coord types
   unsigned coordType[4] = {1, 1, 1, 1};
@@ -507,7 +464,7 @@ void R600CodeEmitter::emitTexInstr(MachineInstr &MI)
 
   if (textureType == TEXTURE_1D_ARRAY
       || textureType == TEXTURE_SHADOW1D_ARRAY) {
-    if (opcode == AMDIL::TEX_SAMPLE_C_L || opcode == AMDIL::TEX_SAMPLE_C_LB) {
+    if (opcode == AMDGPU::TEX_SAMPLE_C_L || opcode == AMDGPU::TEX_SAMPLE_C_LB) {
       coordType[ELEMENT_Y] = 0;
     } else {
       coordType[ELEMENT_Z] = 0;
@@ -519,131 +476,132 @@ void R600CodeEmitter::emitTexInstr(MachineInstr &MI)
   }
 
   for (unsigned i = 0; i < 4; i++) {
-    emitByte(coordType[i]);
+    EmitByte(coordType[i]);
   }
 
   // XXX: Emit offsets
   if (hasOffsets)
 	  for (unsigned i = 2; i < 5; i++)
-		  emitByte(MI.getOperand(i).getImm()<<1);
+		  EmitByte(MI.getOperand(i).getImm()<<1);
   else
-	  emitNullBytes(3);
+	  EmitNullBytes(3);
 
   // Emit sampler id
-  emitByte(sampler);
+  EmitByte(sampler);
 
   // XXX:Emit source select
   if ((textureType == TEXTURE_SHADOW1D
       || textureType == TEXTURE_SHADOW2D
       || textureType == TEXTURE_SHADOWRECT
       || textureType == TEXTURE_SHADOW1D_ARRAY)
-      && opcode != AMDIL::TEX_SAMPLE_C_L
-      && opcode != AMDIL::TEX_SAMPLE_C_LB) {
+      && opcode != AMDGPU::TEX_SAMPLE_C_L
+      && opcode != AMDGPU::TEX_SAMPLE_C_LB) {
     srcSelect[ELEMENT_W] = ELEMENT_Z;
   }
 
   for (unsigned i = 0; i < 4; i++) {
-    emitByte(srcSelect[i]);
+    EmitByte(srcSelect[i]);
   }
 }
 
-void R600CodeEmitter::emitFCInstr(MachineInstr &MI)
+void R600CodeEmitter::EmitFCInstr(MachineInstr &MI)
 {
   // Emit instruction type
-  emitByte(INSTR_FC);
+  EmitByte(INSTR_FC);
 
   // Emit SRC
   unsigned numOperands = MI.getNumOperands();
   if (numOperands > 0) {
     assert(numOperands == 1);
-    emitSrc(MI.getOperand(0));
+    EmitSrc(MI.getOperand(0));
   } else {
-    emitNullBytes(SRC_BYTE_COUNT);
+    EmitNullBytes(SRC_BYTE_COUNT);
   }
 
   // Emit FC Instruction
   enum FCInstr instr;
   switch (MI.getOpcode()) {
-  case AMDIL::BREAK_LOGICALZ_f32:
+  case AMDGPU::BREAK_LOGICALZ_f32:
     instr = FC_BREAK;
     break;
-  case AMDIL::BREAK_LOGICALNZ_f32:
-  case AMDIL::BREAK_LOGICALNZ_i32:
+  case AMDGPU::BREAK_LOGICALNZ_f32:
+  case AMDGPU::BREAK_LOGICALNZ_i32:
     instr = FC_BREAK_NZ_INT;
     break;
-  case AMDIL::BREAK_LOGICALZ_i32:
+  case AMDGPU::BREAK_LOGICALZ_i32:
     instr = FC_BREAK_Z_INT;
     break;
-  case AMDIL::CONTINUE_LOGICALNZ_f32:
-  case AMDIL::CONTINUE_LOGICALNZ_i32:
+  case AMDGPU::CONTINUE_LOGICALNZ_f32:
+  case AMDGPU::CONTINUE_LOGICALNZ_i32:
     instr = FC_CONTINUE;
     break;
-  case AMDIL::IF_LOGICALNZ_f32:
-  case AMDIL::IF_LOGICALNZ_i32:
+  case AMDGPU::IF_LOGICALNZ_f32:
     instr = FC_IF;
+  case AMDGPU::IF_LOGICALNZ_i32:
+    instr = FC_IF_INT;
     break;
-  case AMDIL::IF_LOGICALZ_f32:
+  case AMDGPU::IF_LOGICALZ_f32:
     abort();
     break;
-  case AMDIL::ELSE:
+  case AMDGPU::ELSE:
     instr = FC_ELSE;
     break;
-  case AMDIL::ENDIF:
+  case AMDGPU::ENDIF:
     instr = FC_ENDIF;
     break;
-  case AMDIL::ENDLOOP:
+  case AMDGPU::ENDLOOP:
     instr = FC_ENDLOOP;
     break;
-  case AMDIL::WHILELOOP:
+  case AMDGPU::WHILELOOP:
     instr = FC_BGNLOOP;
     break;
   default:
     abort();
     break;
   }
-  emitByte(instr);
+  EmitByte(instr);
 }
 
-void R600CodeEmitter::emitNullBytes(unsigned int byteCount)
+void R600CodeEmitter::EmitNullBytes(unsigned int byteCount)
 {
   for (unsigned int i = 0; i < byteCount; i++) {
-    emitByte(0);
+    EmitByte(0);
   }
 }
 
-void R600CodeEmitter::emitByte(unsigned int byte)
+void R600CodeEmitter::EmitByte(unsigned int byte)
 {
   _OS.write((uint8_t) byte & 0xff);
 }
-void R600CodeEmitter::emitTwoBytes(unsigned int bytes)
+void R600CodeEmitter::EmitTwoBytes(unsigned int bytes)
 {
   _OS.write((uint8_t) (bytes & 0xff));
   _OS.write((uint8_t) ((bytes >> 8) & 0xff));
 }
 
-void R600CodeEmitter::emit(uint32_t value)
+void R600CodeEmitter::Emit(uint32_t value)
 {
   for (unsigned i = 0; i < 4; i++) {
     _OS.write((uint8_t) ((value >> (8 * i)) & 0xff));
   }
 }
 
-void R600CodeEmitter::emit(uint64_t value)
+void R600CodeEmitter::Emit(uint64_t value)
 {
   for (unsigned i = 0; i < 8; i++) {
-    emitByte((value >> (8 * i)) & 0xff);
+    EmitByte((value >> (8 * i)) & 0xff);
   }
 }
 
 unsigned R600CodeEmitter::getHWReg(unsigned regNo) const
 {
-  unsigned hwReg;
+  unsigned HWReg;
 
-  hwReg = TRI->getHWRegIndex(regNo);
-  if (AMDIL::R600_CReg32RegClass.contains(regNo)) {
-    hwReg += 512;
+  HWReg = TRI->getHWRegIndex(regNo);
+  if (AMDGPU::R600_CReg32RegClass.contains(regNo)) {
+    HWReg += 512;
   }
-  return hwReg;
+  return HWReg;
 }
 
 uint64_t R600CodeEmitter::getMachineOpValue(const MachineInstr &MI,

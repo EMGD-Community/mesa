@@ -1,6 +1,7 @@
 
 #include "gallivm/lp_bld_tgsi_action.h"
 #include "gallivm/lp_bld_const.h"
+#include "gallivm/lp_bld_gather.h"
 #include "gallivm/lp_bld_intr.h"
 #include "gallivm/lp_bld_tgsi.h"
 #include "radeon_llvm.h"
@@ -12,6 +13,7 @@
 
 #include "radeonsi_pipe.h"
 #include "radeonsi_shader.h"
+#include "si_state.h"
 #include "sid.h"
 
 #include <assert.h>
@@ -181,7 +183,7 @@ static void declare_input_vs(
 	struct lp_build_context * uint = &si_shader_ctx->radeon_bld.soa.bld_base.uint_bld;
 	struct lp_build_context * base = &si_shader_ctx->radeon_bld.soa.bld_base.base;
 	struct r600_context *rctx = si_shader_ctx->rctx;
-	struct pipe_vertex_element *velem = &rctx->vertex_elements->elements[input_index];
+	//struct pipe_vertex_element *velem = &rctx->vertex_elements->elements[input_index];
 	unsigned chan;
 
 	/* Load the T list */
@@ -190,12 +192,12 @@ static void declare_input_vs(
  	 * now */
 	t_list_ptr = use_sgpr(base->gallivm, SGPR_CONST_PTR_V4I32, 6);
 
-	t_offset = lp_build_const_int32(base->gallivm, velem->vertex_buffer_index);
+	t_offset = lp_build_const_int32(base->gallivm, input_index);
 
 	t_list = build_indexed_load(base->gallivm, t_list_ptr, t_offset);
 
 	/* Build the attribute offset */
-	attribute_offset = lp_build_const_int32(base->gallivm, velem->src_offset);
+	attribute_offset = lp_build_const_int32(base->gallivm, 0);
 
 	/* Load the buffer index is always, which is always stored in VGPR0
 	 * for Vertex Shaders */
@@ -250,8 +252,13 @@ static void declare_input_fs(
 	/* XXX: Handle all possible interpolation modes */
 	switch (decl->Interp.Interpolate) {
 	case TGSI_INTERPOLATE_COLOR:
-		if (si_shader_ctx->rctx->rasterizer->flatshade) {
+		/* XXX: Flat shading hangs the GPU */
+		if (si_shader_ctx->rctx->queued.named.rasterizer->flatshade) {
+#if 0
 			intr_name = "llvm.SI.fs.interp.constant";
+#else
+			intr_name = "llvm.SI.fs.interp.linear.center";
+#endif
 		} else {
 			if (decl->Interp.Centroid)
 				intr_name = "llvm.SI.fs.interp.persp.centroid";
@@ -260,8 +267,11 @@ static void declare_input_fs(
 		}
 		break;
 	case TGSI_INTERPOLATE_CONSTANT:
+		/* XXX: Flat shading hangs the GPU */
+#if 0
 		intr_name = "llvm.SI.fs.interp.constant";
 		break;
+#endif
 	case TGSI_INTERPOLATE_LINEAR:
 		if (decl->Interp.Centroid)
 			intr_name = "llvm.SI.fs.interp.linear.centroid";
@@ -320,6 +330,7 @@ static LLVMValueRef fetch_constant(
 
 	LLVMValueRef const_ptr;
 	LLVMValueRef offset;
+	LLVMValueRef load;
 
 	/* XXX: Assume the pointer to the constant buffer is being stored in
 	 * SGPR[0:1] */
@@ -331,19 +342,22 @@ static LLVMValueRef fetch_constant(
 	offset = lp_build_const_int32(base->gallivm,
 					(reg->Register.Index * 4) + swizzle);
 
-	return build_indexed_load(base->gallivm, const_ptr, offset);
+	load = build_indexed_load(base->gallivm, const_ptr, offset);
+	return bitcast(bld_base, type, load);
 }
 
 /* XXX: This is partially implemented for VS only at this point.  It is not complete */
 static void si_llvm_emit_epilogue(struct lp_build_tgsi_context * bld_base)
 {
 	struct si_shader_context * si_shader_ctx = si_shader_context(bld_base);
-	struct r600_shader * shader = &si_shader_ctx->shader->shader;
+	struct si_shader * shader = &si_shader_ctx->shader->shader;
 	struct lp_build_context * base = &bld_base->base;
 	struct lp_build_context * uint =
 				&si_shader_ctx->radeon_bld.soa.bld_base.uint_bld;
 	struct tgsi_parse_context *parse = &si_shader_ctx->parse;
 	LLVMValueRef last_args[9] = { 0 };
+	unsigned color_count = 0;
+	unsigned param_count = 0;
 
 	while (!tgsi_parse_end_of_tokens(parse)) {
 		/* XXX: component_bits controls which components of the output
@@ -358,8 +372,6 @@ static void si_llvm_emit_epilogue(struct lp_build_tgsi_context * bld_base)
 		LLVMValueRef args[9];
 		unsigned target;
 		unsigned index;
-		unsigned color_count = 0;
-		unsigned param_count = 0;
 		int i;
 
 		tgsi_parse_token(parse);
@@ -373,17 +385,18 @@ static void si_llvm_emit_epilogue(struct lp_build_tgsi_context * bld_base)
 			shader->input[i].sid = d->Semantic.Index;
 			shader->input[i].interpolate = d->Interp.Interpolate;
 			shader->input[i].centroid = d->Interp.Centroid;
-			break;
+			continue;
+
 		case TGSI_FILE_OUTPUT:
 			i = shader->noutput++;
 			shader->output[i].name = d->Semantic.Name;
 			shader->output[i].sid = d->Semantic.Index;
 			shader->output[i].interpolate = d->Interp.Interpolate;
 			break;
-		}
 
-		if (d->Declaration.File != TGSI_FILE_OUTPUT)
+		default:
 			continue;
+		}
 
 		for (index = d->Range.First; index <= d->Range.Last; index++) {
 			for (chan = 0; chan < 4; chan++ ) {
@@ -464,6 +477,25 @@ static void si_llvm_emit_epilogue(struct lp_build_tgsi_context * bld_base)
 		}
 	}
 
+	if (!last_args[0]) {
+		assert(si_shader_ctx->type == TGSI_PROCESSOR_FRAGMENT);
+
+		/* Specify which components to enable */
+		last_args[0] = lp_build_const_int32(base->gallivm, 0x0);
+
+		/* Specify the target we are exporting */
+		last_args[3] = lp_build_const_int32(base->gallivm, V_008DFC_SQ_EXP_MRT);
+
+		/* Set COMPR flag to zero to export data as 32-bit */
+		last_args[4] = uint->zero;
+
+		/* dummy bits */
+		last_args[5]= uint->zero;
+		last_args[6]= uint->zero;
+		last_args[7]= uint->zero;
+		last_args[8]= uint->zero;
+	}
+
 	/* Specify whether the EXEC mask represents the valid mask */
 	last_args[1] = lp_build_const_int32(base->gallivm,
 					    si_shader_ctx->type == TGSI_PROCESSOR_FRAGMENT);
@@ -484,29 +516,49 @@ static void tex_fetch_args(
 	struct lp_build_tgsi_context * bld_base,
 	struct lp_build_emit_data * emit_data)
 {
+	const struct tgsi_full_instruction * inst = emit_data->inst;
 	LLVMValueRef ptr;
 	LLVMValueRef offset;
 
 	/* WriteMask */
-	emit_data->args[0] = lp_build_const_int32(bld_base->base.gallivm,
-				emit_data->inst->Dst[0].Register.WriteMask);
+	/* XXX: should be optimized using emit_data->inst->Dst[0].Register.WriteMask*/
+	emit_data->args[0] = lp_build_const_int32(bld_base->base.gallivm, 0xf);
 
 	/* Coordinates */
 	/* XXX: Not all sample instructions need 4 address arguments. */
-	emit_data->args[1] = lp_build_emit_fetch(bld_base, emit_data->inst,
-							0, LP_CHAN_ALL);
+	if (inst->Instruction.Opcode == TGSI_OPCODE_TXP) {
+		LLVMValueRef src_w;
+		unsigned chan;
+		LLVMValueRef coords[4];
+
+		emit_data->dst_type = LLVMVectorType(bld_base->base.elem_type, 4);
+		src_w = lp_build_emit_fetch(bld_base, emit_data->inst, 0, TGSI_CHAN_W);
+
+		for (chan = 0; chan < 3; chan++ ) {
+			LLVMValueRef arg = lp_build_emit_fetch(bld_base,
+							       emit_data->inst, 0, chan);
+			coords[chan] = lp_build_emit_llvm_binary(bld_base,
+								 TGSI_OPCODE_DIV,
+								 arg, src_w);
+		}
+		coords[3] = bld_base->base.one;
+		emit_data->args[1] = lp_build_gather_values(bld_base->base.gallivm,
+							    coords, 4);
+	} else
+		emit_data->args[1] = lp_build_emit_fetch(bld_base, emit_data->inst,
+							 0, LP_CHAN_ALL);
 
 	/* Resource */
 	ptr = use_sgpr(bld_base->base.gallivm, SGPR_CONST_PTR_V8I32, 4);
 	offset = lp_build_const_int32(bld_base->base.gallivm,
-				  8 * emit_data->inst->Src[1].Register.Index);
+				  emit_data->inst->Src[1].Register.Index);
 	emit_data->args[2] = build_indexed_load(bld_base->base.gallivm,
 						ptr, offset);
 
 	/* Sampler */
 	ptr = use_sgpr(bld_base->base.gallivm, SGPR_CONST_PTR_V4I32, 2);
 	offset = lp_build_const_int32(bld_base->base.gallivm,
-				  4 * emit_data->inst->Src[1].Register.Index);
+				  emit_data->inst->Src[1].Register.Index);
 	emit_data->args[3] = build_indexed_load(bld_base->base.gallivm,
 						ptr, offset);
 
@@ -543,7 +595,12 @@ int si_pipe_shader_create(
 	unsigned char * inst_bytes;
 	unsigned inst_byte_count;
 	unsigned i;
+	uint32_t *ptr;
+	bool dump;
 
+	dump = debug_get_bool_option("RADEON_DUMP_SHADERS", FALSE);
+
+	memset(&si_shader_ctx.radeon_bld, 0, sizeof(si_shader_ctx.radeon_bld));
 	radeon_llvm_context_init(&si_shader_ctx.radeon_bld);
 	bld_base = &si_shader_ctx.radeon_bld.soa.bld_base;
 
@@ -553,6 +610,7 @@ int si_pipe_shader_create(
 	bld_base->emit_epilogue = si_llvm_emit_epilogue;
 
 	bld_base->op_actions[TGSI_OPCODE_TEX] = tex_action;
+	bld_base->op_actions[TGSI_OPCODE_TXP] = tex_action;
 
 	si_shader_ctx.radeon_bld.load_input = declare_input;
 	si_shader_ctx.tokens = shader->tokens;
@@ -561,21 +619,33 @@ int si_pipe_shader_create(
 	si_shader_ctx.type = si_shader_ctx.parse.FullHeader.Processor.Processor;
 	si_shader_ctx.rctx = rctx;
 
-	shader->shader.nr_cbufs = rctx->nr_cbufs;
+	shader->shader.nr_cbufs = rctx->framebuffer.nr_cbufs;
 
-	lp_build_tgsi_llvm(bld_base, shader->tokens);
+	/* Dump TGSI code before doing TGSI->LLVM conversion in case the
+	 * conversion fails. */
+	if (dump) {
+		tgsi_dump(shader->tokens, 0);
+	}
+
+	if (!lp_build_tgsi_llvm(bld_base, shader->tokens)) {
+		fprintf(stderr, "Failed to translate shader from TGSI to LLVM\n");
+		return -EINVAL;
+	}
 
 	radeon_llvm_finalize_module(&si_shader_ctx.radeon_bld);
 
 	mod = bld_base->base.gallivm->module;
-	tgsi_dump(shader->tokens, 0);
-	LLVMDumpModule(mod);
-	radeon_llvm_compile(mod, &inst_bytes, &inst_byte_count, "SI", 1 /* dump */);
-	fprintf(stderr, "SI CODE:\n");
-	for (i = 0; i < inst_byte_count; i+=4 ) {
-		fprintf(stderr, "%02x%02x%02x%02x\n", inst_bytes[i + 3],
-			inst_bytes[i + 2], inst_bytes[i + 1],
-			inst_bytes[i]);
+	if (dump) {
+		LLVMDumpModule(mod);
+	}
+	radeon_llvm_compile(mod, &inst_bytes, &inst_byte_count, "SI", dump);
+	if (dump) {
+		fprintf(stderr, "SI CODE:\n");
+		for (i = 0; i < inst_byte_count; i+=4 ) {
+			fprintf(stderr, "%02x%02x%02x%02x\n", inst_bytes[i + 3],
+				inst_bytes[i + 2], inst_bytes[i + 1],
+				inst_bytes[i]);
+		}
 	}
 
 	shader->num_sgprs = util_le32_to_cpu(*(uint32_t*)inst_bytes);
@@ -585,24 +655,22 @@ int si_pipe_shader_create(
 	tgsi_parse_free(&si_shader_ctx.parse);
 
 	/* copy new shader */
+	si_resource_reference(&shader->bo, NULL);
+	shader->bo = si_resource_create_custom(ctx->screen, PIPE_USAGE_IMMUTABLE,
+					       inst_byte_count - 12);
 	if (shader->bo == NULL) {
-		uint32_t *ptr;
-
-		shader->bo = (struct r600_resource*)
-			pipe_buffer_create(ctx->screen, PIPE_BIND_CUSTOM, PIPE_USAGE_IMMUTABLE, inst_byte_count);
-		if (shader->bo == NULL) {
-			return -ENOMEM;
-		}
-		ptr = (uint32_t*)rctx->ws->buffer_map(shader->bo->cs_buf, rctx->cs, PIPE_TRANSFER_WRITE);
-		if (0 /*R600_BIG_ENDIAN*/) {
-			for (i = 0; i < (inst_byte_count-12)/4; ++i) {
-				ptr[i] = util_bswap32(*(uint32_t*)(inst_bytes+12 + i*4));
-			}
-		} else {
-			memcpy(ptr, inst_bytes + 12, inst_byte_count - 12);
-		}
-		rctx->ws->buffer_unmap(shader->bo->cs_buf);
+		return -ENOMEM;
 	}
+
+	ptr = (uint32_t*)rctx->ws->buffer_map(shader->bo->cs_buf, rctx->cs, PIPE_TRANSFER_WRITE);
+	if (0 /*R600_BIG_ENDIAN*/) {
+		for (i = 0; i < (inst_byte_count-12)/4; ++i) {
+			ptr[i] = util_bswap32(*(uint32_t*)(inst_bytes+12 + i*4));
+		}
+	} else {
+		memcpy(ptr, inst_bytes + 12, inst_byte_count - 12);
+	}
+	rctx->ws->buffer_unmap(shader->bo->cs_buf);
 
 	free(inst_bytes);
 
@@ -611,7 +679,7 @@ int si_pipe_shader_create(
 
 void si_pipe_shader_destroy(struct pipe_context *ctx, struct si_pipe_shader *shader)
 {
-	pipe_resource_reference((struct pipe_resource**)&shader->bo, NULL);
+	si_resource_reference(&shader->bo, NULL);
 
-	memset(&shader->shader,0,sizeof(struct r600_shader));
+	memset(&shader->shader,0,sizeof(struct si_shader));
 }

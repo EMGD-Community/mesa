@@ -404,8 +404,6 @@ one_time_init( struct gl_context *ctx )
 
       _mesa_get_cpu_features();
 
-      _mesa_init_sqrt_table();
-
       /* context dependence is never a one-time thing... */
       _mesa_init_get_hash(ctx);
 
@@ -433,7 +431,7 @@ one_time_init( struct gl_context *ctx )
        * when an app is linked to libGLES*, there are not enough dynamic
        * entries.
        */
-      if (ctx->API == API_OPENGL)
+      if (_mesa_is_desktop_gl(ctx))
          _mesa_init_remap_table();
    }
 
@@ -478,7 +476,8 @@ _mesa_init_current(struct gl_context *ctx)
  * Important: drivers should override these with actual limits.
  */
 static void
-init_program_limits(GLenum type, struct gl_program_constants *prog)
+init_program_limits(struct gl_context *ctx, GLenum type,
+                    struct gl_program_constants *prog)
 {
    prog->MaxInstructions = MAX_PROGRAM_INSTRUCTIONS;
    prog->MaxAluInstructions = MAX_PROGRAM_INSTRUCTIONS;
@@ -542,6 +541,11 @@ init_program_limits(GLenum type, struct gl_program_constants *prog)
    prog->MediumInt.RangeMax = 24;
    prog->MediumInt.Precision = 0;
    prog->LowInt = prog->HighInt = prog->MediumInt;
+
+   prog->MaxUniformBlocks = 12;
+   prog->MaxCombinedUniformComponents = (prog->MaxUniformComponents +
+                                         ctx->Const.MaxUniformBlockSize / 4 *
+                                         prog->MaxUniformBlocks);
 }
 
 
@@ -588,14 +592,21 @@ _mesa_init_constants(struct gl_context *ctx)
    ctx->Const.MaxSpotExponent = 128.0;
    ctx->Const.MaxViewportWidth = MAX_VIEWPORT_WIDTH;
    ctx->Const.MaxViewportHeight = MAX_VIEWPORT_HEIGHT;
+
+   /** GL_ARB_uniform_buffer_object */
+   ctx->Const.MaxCombinedUniformBlocks = 36;
+   ctx->Const.MaxUniformBufferBindings = 36;
+   ctx->Const.MaxUniformBlockSize = 16384;
+   ctx->Const.UniformBufferOffsetAlignment = 1;
+
 #if FEATURE_ARB_vertex_program
-   init_program_limits(GL_VERTEX_PROGRAM_ARB, &ctx->Const.VertexProgram);
+   init_program_limits(ctx, GL_VERTEX_PROGRAM_ARB, &ctx->Const.VertexProgram);
 #endif
 #if FEATURE_ARB_fragment_program
-   init_program_limits(GL_FRAGMENT_PROGRAM_ARB, &ctx->Const.FragmentProgram);
+   init_program_limits(ctx, GL_FRAGMENT_PROGRAM_ARB, &ctx->Const.FragmentProgram);
 #endif
 #if FEATURE_ARB_geometry_shader4
-   init_program_limits(MESA_GEOMETRY_PROGRAM, &ctx->Const.GeometryProgram);
+   init_program_limits(ctx, MESA_GEOMETRY_PROGRAM, &ctx->Const.GeometryProgram);
 #endif
    ctx->Const.MaxProgramMatrices = MAX_PROGRAM_MATRICES;
    ctx->Const.MaxProgramMatrixStackDepth = MAX_PROGRAM_MATRIX_STACK_DEPTH;
@@ -625,7 +636,7 @@ _mesa_init_constants(struct gl_context *ctx)
 #endif
 
    /* Shading language version */
-   if (ctx->API == API_OPENGL) {
+   if (_mesa_is_desktop_gl(ctx)) {
       ctx->Const.GLSLVersion = 120;
       _mesa_override_glsl_version(ctx);
    }
@@ -649,9 +660,10 @@ _mesa_init_constants(struct gl_context *ctx)
    ctx->Const.QuadsFollowProvokingVertexConvention = GL_TRUE;
 
    /* GL_EXT_transform_feedback */
-   ctx->Const.MaxTransformFeedbackSeparateAttribs = MAX_FEEDBACK_ATTRIBS;
+   ctx->Const.MaxTransformFeedbackBuffers = MAX_FEEDBACK_BUFFERS;
    ctx->Const.MaxTransformFeedbackSeparateComponents = 4 * MAX_FEEDBACK_ATTRIBS;
    ctx->Const.MaxTransformFeedbackInterleavedComponents = 4 * MAX_FEEDBACK_ATTRIBS;
+   ctx->Const.MaxVertexStreams = 1;
 
    /* GL 3.2: hard-coded for now: */
    ctx->Const.ProfileMask = GL_CONTEXT_COMPATIBILITY_PROFILE_BIT;
@@ -834,7 +846,10 @@ update_default_objects(struct gl_context *ctx)
 static int
 generic_nop(void)
 {
-   _mesa_warning(NULL, "User called no-op dispatch function (an unsupported extension function?)");
+   GET_CURRENT_CONTEXT(ctx);
+   _mesa_error(ctx, GL_INVALID_OPERATION,
+               "unsupported function called "
+               "(unsupported extension or deprecated function?)");
    return 0;
 }
 
@@ -951,7 +966,8 @@ _mesa_initialize_context(struct gl_context *ctx,
    switch (ctx->API) {
 #if FEATURE_GL
    case API_OPENGL:
-      ctx->Exec = _mesa_create_exec_table();
+   case API_OPENGL_CORE:
+      ctx->Exec = _mesa_create_exec_table(ctx);
       break;
 #endif
 #if FEATURE_ES1
@@ -996,6 +1012,7 @@ _mesa_initialize_context(struct gl_context *ctx,
 
    switch (ctx->API) {
    case API_OPENGL:
+   case API_OPENGL_CORE:
 #if FEATURE_dlist
       ctx->Save = _mesa_create_save_table();
       if (!ctx->Save) {
@@ -1445,8 +1462,8 @@ _mesa_make_current( struct gl_context *newCtx,
       _glapi_set_dispatch(newCtx->CurrentDispatch);
 
       if (drawBuffer && readBuffer) {
-         ASSERT(drawBuffer->Name == 0);
-         ASSERT(readBuffer->Name == 0);
+         ASSERT(_mesa_is_winsys_fbo(drawBuffer));
+         ASSERT(_mesa_is_winsys_fbo(readBuffer));
          _mesa_reference_framebuffer(&newCtx->WinSysDrawBuffer, drawBuffer);
          _mesa_reference_framebuffer(&newCtx->WinSysReadBuffer, readBuffer);
 
@@ -1454,7 +1471,7 @@ _mesa_make_current( struct gl_context *newCtx,
           * Only set the context's Draw/ReadBuffer fields if they're NULL
           * or not bound to a user-created FBO.
           */
-         if (!newCtx->DrawBuffer || newCtx->DrawBuffer->Name == 0) {
+         if (!newCtx->DrawBuffer || _mesa_is_winsys_fbo(newCtx->DrawBuffer)) {
             _mesa_reference_framebuffer(&newCtx->DrawBuffer, drawBuffer);
             /* Update the FBO's list of drawbuffers/renderbuffers.
              * For winsys FBOs this comes from the GL state (which may have
@@ -1462,7 +1479,7 @@ _mesa_make_current( struct gl_context *newCtx,
              */
             _mesa_update_draw_buffers(newCtx);
          }
-         if (!newCtx->ReadBuffer || newCtx->ReadBuffer->Name == 0) {
+         if (!newCtx->ReadBuffer || _mesa_is_winsys_fbo(newCtx->ReadBuffer)) {
             _mesa_reference_framebuffer(&newCtx->ReadBuffer, readBuffer);
          }
 

@@ -31,6 +31,7 @@
 #include "main/mtypes.h"
 #include "pipe/p_state.h"
 #include "state_tracker/st_api.h"
+#include "main/fbobject.h"
 
 struct bitmap_cache;
 struct blit_state;
@@ -81,12 +82,14 @@ struct st_context
    struct draw_stage *rastpos_stage;  /**< For glRasterPos */
    GLboolean clamp_frag_color_in_shader;
    GLboolean clamp_vert_color_in_shader;
-
+   boolean has_stencil_export; /**< can do shader stencil export? */
 
    /* On old libGL's for linux we need to invalidate the drawables
     * on glViewpport calls, this is set via a option.
     */
    boolean invalidate_on_gl_viewport;
+
+   boolean vertex_array_out_of_memory;
 
    /* Some state is contained in constant objects.
     * Other state is just parameter values.
@@ -95,26 +98,28 @@ struct st_context
       struct pipe_blend_state               blend;
       struct pipe_depth_stencil_alpha_state depth_stencil;
       struct pipe_rasterizer_state          rasterizer;
-      struct pipe_sampler_state             samplers[PIPE_MAX_SAMPLERS];
-      struct pipe_sampler_state             vertex_samplers[PIPE_MAX_VERTEX_SAMPLERS];
+      struct pipe_sampler_state    fragment_samplers[PIPE_MAX_SAMPLERS];
+      struct pipe_sampler_state    vertex_samplers[PIPE_MAX_VERTEX_SAMPLERS];
       struct pipe_clip_state clip;
       struct {
          void *ptr;
          unsigned size;
       } constants[PIPE_SHADER_TYPES];
       struct pipe_framebuffer_state framebuffer;
-      struct pipe_sampler_view *sampler_views[PIPE_MAX_SAMPLERS];
-      struct pipe_sampler_view *sampler_vertex_views[PIPE_MAX_VERTEX_SAMPLERS];
+      struct pipe_sampler_view *fragment_sampler_views[PIPE_MAX_SAMPLERS];
+      struct pipe_sampler_view *vertex_sampler_views[PIPE_MAX_VERTEX_SAMPLERS];
       struct pipe_scissor_state scissor;
       struct pipe_viewport_state viewport;
       unsigned sample_mask;
 
-      GLuint num_samplers;
+      GLuint num_fragment_samplers;
       GLuint num_vertex_samplers;
-      GLuint num_textures;
+      GLuint num_fragment_textures;
       GLuint num_vertex_textures;
 
       GLuint poly_stipple[32];  /**< In OpenGL's bottom-to-top order */
+
+      GLuint fb_orientation;
    } state;
 
    char vendor[100];
@@ -234,7 +239,7 @@ void st_invalidate_state(struct gl_context * ctx, GLuint new_state);
 static INLINE GLuint
 st_fb_orientation(const struct gl_framebuffer *fb)
 {
-   if (fb && fb->Name == 0) {
+   if (fb && _mesa_is_winsys_fbo(fb)) {
       /* Drawing into a window (on-screen buffer).
        *
        * Negate Y scale to flip image vertically.

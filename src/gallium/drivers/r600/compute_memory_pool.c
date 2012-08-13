@@ -41,24 +41,65 @@
 #include "compute_memory_pool.h"
 #include "evergreen_compute_internal.h"
 
+static struct r600_resource_texture * create_pool_texture(struct r600_screen * screen,
+		unsigned size_in_dw)
+{
+
+	struct pipe_resource templ;
+	struct r600_resource_texture * tex;
+
+	if (size_in_dw == 0) {
+		return NULL;
+	}
+	memset(&templ, 0, sizeof(templ));
+	templ.target = PIPE_TEXTURE_1D;
+	templ.format = PIPE_FORMAT_R32_UINT;
+	templ.bind = PIPE_BIND_CUSTOM;
+	templ.usage = PIPE_USAGE_IMMUTABLE;
+	templ.flags = 0;
+	templ.width0 = size_in_dw;
+	templ.height0 = 1;
+	templ.depth0 = 1;
+	templ.array_size = 1;
+
+	tex = (struct r600_resource_texture *)r600_texture_create(
+						&screen->screen, &templ);
+	/* XXX: Propagate this error */
+	assert(tex && "Out of memory");
+	tex->is_rat = 1;
+	return tex;
+}
+
 /**
  * Creates a new pool
  */
 struct compute_memory_pool* compute_memory_pool_new(
-	int64_t initial_size_in_dw,
 	struct r600_screen * rscreen)
 {
 	struct compute_memory_pool* pool = (struct compute_memory_pool*)
 				CALLOC(sizeof(struct compute_memory_pool), 1);
 
+	COMPUTE_DBG("* compute_memory_pool_new()\n");
+
+	pool->screen = rscreen;
+	return pool;
+}
+
+static void compute_memory_pool_init(struct compute_memory_pool * pool,
+	unsigned initial_size_in_dw)
+{
+
+	COMPUTE_DBG("* compute_memory_pool_init() initial_size_in_dw = %ld\n",
+		initial_size_in_dw);
+
+	/* XXX: pool->shadow is used when the buffer needs to be resized, but
+	 * resizing does not work at the moment.
+	 * pool->shadow = (uint32_t*)CALLOC(4, pool->size_in_dw);
+	 */
 	pool->next_id = 1;
 	pool->size_in_dw = initial_size_in_dw;
-	pool->screen = rscreen;
-	pool->bo = (struct r600_resource*)r600_compute_buffer_alloc_vram(
-					pool->screen, pool->size_in_dw*4);
-	pool->shadow = (uint32_t*)CALLOC(4, pool->size_in_dw);
-
-	return pool;
+	pool->bo = (struct r600_resource*)create_pool_texture(pool->screen,
+							pool->size_in_dw);
 }
 
 /**
@@ -66,9 +107,12 @@ struct compute_memory_pool* compute_memory_pool_new(
  */
 void compute_memory_pool_delete(struct compute_memory_pool* pool)
 {
+	COMPUTE_DBG("* compute_memory_pool_delete()\n");
 	free(pool->shadow);
-	pool->screen->screen.resource_destroy((struct pipe_screen *)
+	if (pool->bo) {
+		pool->screen->screen.resource_destroy((struct pipe_screen *)
 			pool->screen, (struct pipe_resource *)pool->bo);
+	}
 	free(pool);
 }
 
@@ -85,6 +129,9 @@ int64_t compute_memory_prealloc_chunk(
 	struct compute_memory_item *item;
 
 	int last_end = 0;
+
+	COMPUTE_DBG("* compute_memory_prealloc_chunk() size_in_dw = %ld\n",
+		size_in_dw);
 
 	for (item = pool->item_list; item; item = item->next) {
 		if (item->start_in_dw > -1) {
@@ -113,6 +160,9 @@ struct compute_memory_item* compute_memory_postalloc_chunk(
 {
 	struct compute_memory_item* item;
 
+	COMPUTE_DBG("* compute_memory_postalloc_chunck() start_in_dw = %ld\n",
+		start_in_dw);
+
 	for (item = pool->item_list; item; item = item->next) {
 		if (item->next) {
 			if (item->start_in_dw < start_in_dw
@@ -137,19 +187,39 @@ struct compute_memory_item* compute_memory_postalloc_chunk(
 void compute_memory_grow_pool(struct compute_memory_pool* pool,
 	struct pipe_context * pipe, int new_size_in_dw)
 {
+	COMPUTE_DBG("* compute_memory_grow_pool() new_size_in_dw = %d\n",
+		new_size_in_dw);
+
 	assert(new_size_in_dw >= pool->size_in_dw);
 
-	new_size_in_dw += 1024 - (new_size_in_dw % 1024);
+	assert(!pool->bo && "Growing the global memory pool is not yet "
+		"supported.  You will see this message if you are trying to"
+		"use more than 64 kb of memory");
 
-	compute_memory_shadow(pool, pipe, 1);
-	pool->shadow = (uint32_t*)realloc(pool->shadow, new_size_in_dw*4);
-	pool->size_in_dw = new_size_in_dw;
-	pool->screen->screen.resource_destroy(
-		(struct pipe_screen *)pool->screen,
-		(struct pipe_resource *)pool->bo);
-	pool->bo = r600_compute_buffer_alloc_vram(pool->screen,
-						pool->size_in_dw*4);
-	compute_memory_shadow(pool, pipe, 0);
+	if (!pool->bo) {
+		compute_memory_pool_init(pool, 1024 * 16);
+	} else {
+		/* XXX: Growing memory pools does not work at the moment.  I think
+		 * it is because we are using fragment shaders to copy data to
+		 * the new texture and some of the compute registers are being
+		 * included in the 3D command stream. */
+		fprintf(stderr, "Warning: growing the global memory pool to"
+				"more than 64 kb is not yet supported\n");
+		new_size_in_dw += 1024 - (new_size_in_dw % 1024);
+
+		COMPUTE_DBG("  Aligned size = %d\n", new_size_in_dw);
+
+		compute_memory_shadow(pool, pipe, 1);
+		pool->shadow = (uint32_t*)realloc(pool->shadow, new_size_in_dw*4);
+		pool->size_in_dw = new_size_in_dw;
+		pool->screen->screen.resource_destroy(
+			(struct pipe_screen *)pool->screen,
+			(struct pipe_resource *)pool->bo);
+		pool->bo = (struct r600_resource*)create_pool_texture(
+							pool->screen,
+							pool->size_in_dw);
+		compute_memory_shadow(pool, pipe, 0);
+	}
 }
 
 /**
@@ -159,6 +229,9 @@ void compute_memory_shadow(struct compute_memory_pool* pool,
 	struct pipe_context * pipe, int device_to_host)
 {
 	struct compute_memory_item chunk;
+
+	COMPUTE_DBG("* compute_memory_shadow() device_to_host = %d\n",
+		device_to_host);
 
 	chunk.id = 0;
 	chunk.start_in_dw = 0;
@@ -179,6 +252,8 @@ void compute_memory_finalize_pending(struct compute_memory_pool* pool,
 
 	int64_t allocated = 0;
 	int64_t unallocated = 0;
+
+	COMPUTE_DBG("* compute_memory_finalize_pending()\n");
 
 	for (item = pool->item_list; item; item = item->next) {
 		COMPUTE_DBG("list: %i %p\n", item->start_in_dw, item->next);
@@ -277,6 +352,8 @@ void compute_memory_free(struct compute_memory_pool* pool, int64_t id)
 {
 	struct compute_memory_item *item, *next;
 
+	COMPUTE_DBG("* compute_memory_free() id + %ld \n", id);
+
 	for (item = pool->item_list; item; item = next) {
 		next = item->next;
 
@@ -313,7 +390,7 @@ struct compute_memory_item* compute_memory_alloc(
 {
 	struct compute_memory_item *new_item;
 
-	COMPUTE_DBG("Alloc: %i\n", size_in_dw);
+	COMPUTE_DBG("* compute_memory_alloc() size_in_dw = %ld\n", size_in_dw);
 
 	new_item = (struct compute_memory_item *)
 				CALLOC(sizeof(struct compute_memory_item), 1);
@@ -356,6 +433,12 @@ void compute_memory_transfer(
 
 	struct pipe_transfer *xfer;
 	uint32_t *map;
+
+	assert(gart);
+
+	COMPUTE_DBG("* compute_memory_transfer() device_to_host = %d, "
+		"offset_in_chunk = %d, size = %d\n", device_to_host,
+		offset_in_chunk, size);
 
 	if (device_to_host)
 	{

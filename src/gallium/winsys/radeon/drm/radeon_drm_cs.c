@@ -81,6 +81,8 @@
 
 /* The first dword of RADEON_CHUNK_ID_FLAGS is a uint32 of these flags: */
 #define RADEON_CS_KEEP_TILING_FLAGS 0x01
+
+
 #endif
 
 #ifndef RADEON_CS_USE_VM
@@ -118,7 +120,7 @@ static boolean radeon_init_cs_context(struct radeon_cs_context *csc,
     csc->chunks[1].length_dw = 0;
     csc->chunks[1].chunk_data = (uint64_t)(uintptr_t)csc->relocs;
     csc->chunks[2].chunk_id = RADEON_CHUNK_ID_FLAGS;
-    csc->chunks[2].length_dw = 1;
+    csc->chunks[2].length_dw = 2;
     csc->chunks[2].chunk_data = (uint64_t)(uintptr_t)&csc->flags;
 
     csc->chunk_array[0] = (uint64_t)(uintptr_t)&csc->chunks[0];
@@ -454,15 +456,20 @@ static void radeon_drm_cs_flush(struct radeon_winsys_cs *rcs, unsigned flags)
             p_atomic_inc(&cs->cst->relocs_bo[i]->num_active_ioctls);
         }
 
-        cs->cst->flags = 0;
+        cs->cst->flags[0] = 0;
+        cs->cst->flags[1] = RADEON_CS_RING_GFX;
         cs->cst->cs.num_chunks = 2;
         if (flags & RADEON_FLUSH_KEEP_TILING_FLAGS) {
-            cs->cst->flags |= RADEON_CS_KEEP_TILING_FLAGS;
+            cs->cst->flags[0] |= RADEON_CS_KEEP_TILING_FLAGS;
             cs->cst->cs.num_chunks = 3;
         }
         if (cs->ws->info.r600_virtual_address) {
+            cs->cst->flags[0] |= RADEON_CS_USE_VM;
             cs->cst->cs.num_chunks = 3;
-            cs->cst->flags |= RADEON_CS_USE_VM;
+        }
+        if (flags & RADEON_FLUSH_COMPUTE) {
+            cs->cst->flags[1] = RADEON_CS_RING_COMPUTE;
+            cs->cst->cs.num_chunks = 3;
         }
 
         if (cs->thread &&
@@ -490,7 +497,6 @@ static void radeon_drm_cs_destroy(struct radeon_winsys_cs *rcs)
         pipe_semaphore_signal(&cs->flush_queued);
         pipe_semaphore_wait(&cs->flush_completed);
         pipe_thread_wait(cs->thread);
-        pipe_thread_destroy(cs->thread);
     }
     pipe_semaphore_destroy(&cs->flush_queued);
     pipe_semaphore_destroy(&cs->flush_completed);

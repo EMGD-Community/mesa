@@ -71,6 +71,29 @@ dot(ir_constant *op0, ir_constant *op1)
    return result;
 }
 
+/* This method is the only one supported by gcc.  Unions in particular
+ * are iffy, and read-through-converted-pointer is killed by strict
+ * aliasing.  OTOH, the compiler sees through the memcpy, so the
+ * resulting asm is reasonable.
+ */
+static float
+bitcast_u2f(unsigned int u)
+{
+   assert(sizeof(float) == sizeof(unsigned int));
+   float f;
+   memcpy(&f, &u, sizeof(f));
+   return f;
+}
+
+static unsigned int
+bitcast_f2u(float f)
+{
+   assert(sizeof(float) == sizeof(unsigned int));
+   unsigned int u;
+   memcpy(&u, &f, sizeof(f));
+   return u;
+}
+
 ir_constant *
 ir_rvalue::constant_expression_value(struct hash_table *variable_context)
 {
@@ -159,6 +182,12 @@ ir_expression::constant_expression_value(struct hash_table *variable_context)
 	 data.i[c] = (int) op[0]->value.f[c];
       }
       break;
+   case ir_unop_f2u:
+      assert(op[0]->type->base_type == GLSL_TYPE_FLOAT);
+      for (unsigned c = 0; c < op[0]->type->components(); c++) {
+         data.i[c] = (unsigned) op[0]->value.f[c];
+      }
+      break;
    case ir_unop_i2f:
       assert(op[0]->type->base_type == GLSL_TYPE_INT);
       for (unsigned c = 0; c < op[0]->type->components(); c++) {
@@ -205,6 +234,30 @@ ir_expression::constant_expression_value(struct hash_table *variable_context)
       assert(op[0]->type->base_type == GLSL_TYPE_INT);
       for (unsigned c = 0; c < op[0]->type->components(); c++) {
 	 data.u[c] = op[0]->value.i[c];
+      }
+      break;
+   case ir_unop_bitcast_i2f:
+      assert(op[0]->type->base_type == GLSL_TYPE_INT);
+      for (unsigned c = 0; c < op[0]->type->components(); c++) {
+	 data.f[c] = bitcast_u2f(op[0]->value.i[c]);
+      }
+      break;
+   case ir_unop_bitcast_f2i:
+      assert(op[0]->type->base_type == GLSL_TYPE_FLOAT);
+      for (unsigned c = 0; c < op[0]->type->components(); c++) {
+	 data.i[c] = bitcast_f2u(op[0]->value.f[c]);
+      }
+      break;
+   case ir_unop_bitcast_u2f:
+      assert(op[0]->type->base_type == GLSL_TYPE_UINT);
+      for (unsigned c = 0; c < op[0]->type->components(); c++) {
+	 data.f[c] = bitcast_u2f(op[0]->value.u[c]);
+      }
+      break;
+   case ir_unop_bitcast_f2u:
+      assert(op[0]->type->base_type == GLSL_TYPE_FLOAT);
+      for (unsigned c = 0; c < op[0]->type->components(); c++) {
+	 data.u[c] = bitcast_f2u(op[0]->value.f[c]);
       }
       break;
    case ir_unop_any:
@@ -1275,8 +1328,11 @@ ir_function_signature::constant_expression_value(exec_list *actual_parameters, s
 
    foreach_list(n, actual_parameters) {
       ir_constant *constant = ((ir_rvalue *) n)->constant_expression_value(variable_context);
-      if (constant == NULL)
-	 return NULL;
+      if (constant == NULL) {
+         hash_table_dtor(deref_hash);
+         return NULL;
+      }
+
 
       ir_variable *var = (ir_variable *)parameter_info;
       hash_table_insert(deref_hash, constant, var);

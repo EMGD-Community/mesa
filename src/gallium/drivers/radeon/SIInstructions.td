@@ -13,7 +13,7 @@ def load_user_sgpr : PatFrag<(ops node:$ptr),
     const Value *Src = cast<LoadSDNode>(N)->getSrcValue();
     if (Src) {
       PointerType * PT = dyn_cast<PointerType>(Src->getType());
-      return PT && PT->getAddressSpace() == AMDILAS::USER_SGPR_ADDRESS;
+      return PT && PT->getAddressSpace() == AMDGPUAS::USER_SGPR_ADDRESS;
     }
     return false;
   }]
@@ -21,7 +21,7 @@ def load_user_sgpr : PatFrag<(ops node:$ptr),
 
 
 def isSI : Predicate<"Subtarget.device()"
-                            "->getGeneration() == AMDILDeviceInfo::HD7XXX">;
+                            "->getGeneration() == AMDGPUDeviceInfo::HD7XXX">;
 
 let Predicates = [isSI] in {
 
@@ -77,7 +77,26 @@ def S_ABS_I32 : SOP1_32 <0x00000034, "S_ABS_I32", []>;
 def S_MOV_FED_B32 : SOP1_32 <0x00000035, "S_MOV_FED_B32", []>;
 def S_MOVK_I32 : SOPK_32 <0x00000000, "S_MOVK_I32", []>;
 def S_CMOVK_I32 : SOPK_32 <0x00000002, "S_CMOVK_I32", []>;
-def S_CMPK_EQ_I32 : SOPK_32 <0x00000003, "S_CMPK_EQ_I32", []>;
+
+/*
+This instruction is disabled for now until we can figure out how to teach
+the instruction selector to correctly use the  S_CMP* vs V_CMP*
+instructions.
+
+When this instruction is enabled the code generator sometimes produces this
+invalid sequence:
+
+SCC = S_CMPK_EQ_I32 SGPR0, imm
+VCC = COPY SCC
+VGPR0 = V_CNDMASK VCC, VGPR0, VGPR1
+
+def S_CMPK_EQ_I32 : SOPK <
+  0x00000003, (outs SCCReg:$dst), (ins SReg_32:$src0, i32imm:$src1),
+  "S_CMPK_EQ_I32",
+  [(set SCCReg:$dst, (setcc SReg_32:$src0, imm:$src1, SETEQ))]
+>;
+*/
+
 def S_CMPK_LG_I32 : SOPK_32 <0x00000004, "S_CMPK_LG_I32", []>;
 def S_CMPK_GT_I32 : SOPK_32 <0x00000005, "S_CMPK_GT_I32", []>;
 def S_CMPK_GE_I32 : SOPK_32 <0x00000006, "S_CMPK_GE_I32", []>;
@@ -97,20 +116,35 @@ def S_SETREG_B32 : SOPK_32 <0x00000013, "S_SETREG_B32", []>;
 def S_GETREG_REGRD_B32 : SOPK_32 <0x00000014, "S_GETREG_REGRD_B32", []>;
 //def S_SETREG_IMM32_B32 : SOPK_32 <0x00000015, "S_SETREG_IMM32_B32", []>;
 //def EXP : EXP_ <0x00000000, "EXP", []>;
+
 defm V_CMP_F_F32 : VOPC_32 <0x00000000, "V_CMP_F_F32", []>;
-defm V_CMP_LT_F32 : VOPC_32 <0x00000001, "V_CMP_LT_F32", []>;
-defm V_CMP_EQ_F32 : VOPC_32 <0x00000002, "V_CMP_EQ_F32", []>;
-defm V_CMP_LE_F32 : VOPC_32 <0x00000003, "V_CMP_LE_F32", []>;
-defm V_CMP_GT_F32 : VOPC_32 <0x00000004, "V_CMP_GT_F32", []>;
-defm V_CMP_LG_F32 : VOPC_32 <0x00000005, "V_CMP_LG_F32", []>;
-defm V_CMP_GE_F32 : VOPC_32 <0x00000006, "V_CMP_GE_F32", []>;
+defm V_CMP_LT_F32 : VOPC_32 <0x00000001, "V_CMP_LT_F32",
+  [(set VCCReg:$dst, (setcc (f32 AllReg_32:$src0), VReg_32:$src1, COND_LT))]
+>;
+defm V_CMP_EQ_F32 : VOPC_32 <0x00000002, "V_CMP_EQ_F32",
+  [(set VCCReg:$dst, (setcc (f32 AllReg_32:$src0), VReg_32:$src1, COND_EQ))]
+>;
+defm V_CMP_LE_F32 : VOPC_32 <0x00000003, "V_CMP_LE_F32",
+  [(set VCCReg:$dst, (setcc (f32 AllReg_32:$src0), VReg_32:$src1, COND_LE))]
+>;
+defm V_CMP_GT_F32 : VOPC_32 <0x00000004, "V_CMP_GT_F32",
+  [(set VCCReg:$dst, (setcc (f32 AllReg_32:$src0), VReg_32:$src1, COND_GT))]
+>;
+defm V_CMP_LG_F32 : VOPC_32 <0x00000005, "V_CMP_LG_F32",
+  [(set VCCReg:$dst, (setcc (f32 AllReg_32:$src0), VReg_32:$src1, COND_NE))]
+>;
+defm V_CMP_GE_F32 : VOPC_32 <0x00000006, "V_CMP_GE_F32",
+  [(set VCCReg:$dst, (setcc (f32 AllReg_32:$src0), VReg_32:$src1, COND_GE))]
+>;
 defm V_CMP_O_F32 : VOPC_32 <0x00000007, "V_CMP_O_F32", []>;
 defm V_CMP_U_F32 : VOPC_32 <0x00000008, "V_CMP_U_F32", []>;
 defm V_CMP_NGE_F32 : VOPC_32 <0x00000009, "V_CMP_NGE_F32", []>;
 defm V_CMP_NLG_F32 : VOPC_32 <0x0000000a, "V_CMP_NLG_F32", []>;
 defm V_CMP_NGT_F32 : VOPC_32 <0x0000000b, "V_CMP_NGT_F32", []>;
 defm V_CMP_NLE_F32 : VOPC_32 <0x0000000c, "V_CMP_NLE_F32", []>;
-defm V_CMP_NEQ_F32 : VOPC_32 <0x0000000d, "V_CMP_NEQ_F32", []>;
+defm V_CMP_NEQ_F32 : VOPC_32 <0x0000000d, "V_CMP_NEQ_F32",
+  [(set VCCReg:$dst, (setcc (f32 AllReg_32:$src0), VReg_32:$src1, COND_NE))]
+>;
 defm V_CMP_NLT_F32 : VOPC_32 <0x0000000e, "V_CMP_NLT_F32", []>;
 defm V_CMP_TRU_F32 : VOPC_32 <0x0000000f, "V_CMP_TRU_F32", []>;
 defm V_CMPX_F_F32 : VOPC_32 <0x00000010, "V_CMPX_F_F32", []>;
@@ -227,10 +261,14 @@ defm V_CMPSX_NLT_F64 : VOPC_64 <0x0000007e, "V_CMPSX_NLT_F64", []>;
 defm V_CMPSX_TRU_F64 : VOPC_64 <0x0000007f, "V_CMPSX_TRU_F64", []>;
 defm V_CMP_F_I32 : VOPC_32 <0x00000080, "V_CMP_F_I32", []>;
 defm V_CMP_LT_I32 : VOPC_32 <0x00000081, "V_CMP_LT_I32", []>;
-defm V_CMP_EQ_I32 : VOPC_32 <0x00000082, "V_CMP_EQ_I32", []>;
+defm V_CMP_EQ_I32 : VOPC_32 <0x00000082, "V_CMP_EQ_I32",
+  [(set VCCReg:$dst, (setcc (i32 AllReg_32:$src0), VReg_32:$src1, SETEQ))]
+>;
 defm V_CMP_LE_I32 : VOPC_32 <0x00000083, "V_CMP_LE_I32", []>;
 defm V_CMP_GT_I32 : VOPC_32 <0x00000084, "V_CMP_GT_I32", []>;
-defm V_CMP_NE_I32 : VOPC_32 <0x00000085, "V_CMP_NE_I32", []>;
+defm V_CMP_NE_I32 : VOPC_32 <0x00000085, "V_CMP_NE_I32",
+  [(set VCCReg:$dst, (setcc (i32 AllReg_32:$src0), VReg_32:$src1, SETNE))]
+>;
 defm V_CMP_GE_I32 : VOPC_32 <0x00000086, "V_CMP_GE_I32", []>;
 defm V_CMP_T_I32 : VOPC_32 <0x00000087, "V_CMP_T_I32", []>;
 defm V_CMPX_F_I32 : VOPC_32 <0x00000090, "V_CMPX_F_I32", []>;
@@ -358,7 +396,8 @@ def TBUFFER_LOAD_FORMAT_XYZW : MTBUF_Load_Helper <0x00000003, "TBUFFER_LOAD_FORM
 //def TBUFFER_STORE_FORMAT_XYZ : MTBUF_ <0x00000006, "TBUFFER_STORE_FORMAT_XYZ", []>;
 //def TBUFFER_STORE_FORMAT_XYZW : MTBUF_ <0x00000007, "TBUFFER_STORE_FORMAT_XYZW", []>;
 
-defm S_LOAD_DWORD : SMRD_Helper <0x00000000, "S_LOAD_DWORD", SReg_32, f32>;
+defm S_LOAD_DWORD : SMRD_32 <0x00000000, "S_LOAD_DWORD", SReg_32>;
+
 //def S_LOAD_DWORDX2 : SMRD_DWORDX2 <0x00000001, "S_LOAD_DWORDX2", []>;
 defm S_LOAD_DWORDX4 : SMRD_Helper <0x00000002, "S_LOAD_DWORDX4", SReg_128, v4i32>;
 defm S_LOAD_DWORDX8 : SMRD_Helper <0x00000003, "S_LOAD_DWORDX8", SReg_256, v8i32>;
@@ -474,7 +513,9 @@ defm V_MOV_B32 : VOP1_32 <0x00000001, "V_MOV_B32", []>;
 defm V_READFIRSTLANE_B32 : VOP1_32 <0x00000002, "V_READFIRSTLANE_B32", []>;
 //defm V_CVT_I32_F64 : VOP1_32 <0x00000003, "V_CVT_I32_F64", []>;
 //defm V_CVT_F64_I32 : VOP1_64 <0x00000004, "V_CVT_F64_I32", []>;
-//defm V_CVT_F32_I32 : VOP1_32 <0x00000005, "V_CVT_F32_I32", []>;
+defm V_CVT_F32_I32 : VOP1_32 <0x00000005, "V_CVT_F32_I32",
+  [(set VReg_32:$dst, (fp_to_sint AllReg_32:$src0))]
+>;
 //defm V_CVT_F32_U32 : VOP1_32 <0x00000006, "V_CVT_F32_U32", []>;
 //defm V_CVT_U32_F32 : VOP1_32 <0x00000007, "V_CVT_U32_F32", []>;
 //defm V_CVT_I32_F32 : VOP1_32 <0x00000008, "V_CVT_I32_F32", []>;
@@ -564,19 +605,52 @@ def V_INTERP_MOV_F32 : VINTRP <
 
 //def V_INTERP_MOV_F32 : VINTRP_32 <0x00000002, "V_INTERP_MOV_F32", []>;
 //def S_NOP : SOPP_ <0x00000000, "S_NOP", []>;
-def S_ENDPGM : SOPP <0x00000001, (ins), "S_ENDPGM"> {
+
+let isTerminator = 1 in {
+
+def S_ENDPGM : SOPP <0x00000001, (ins), "S_ENDPGM", []> {
   let SIMM16 = 0;
-  let isTerminator = 1;
 }
-//def S_BRANCH : SOPP_ <0x00000002, "S_BRANCH", []>;
-//def S_CBRANCH_SCC0 : SOPP_SCC0 <0x00000004, "S_CBRANCH_SCC0", []>;
-//def S_CBRANCH_SCC1 : SOPP_SCC1 <0x00000005, "S_CBRANCH_SCC1", []>;
-//def S_CBRANCH_VCCZ : SOPP_ <0x00000006, "S_CBRANCH_VCCZ", []>;
-//def S_CBRANCH_VCCNZ : SOPP_ <0x00000007, "S_CBRANCH_VCCNZ", []>;
+
+let isBranch = 1 in {
+def S_BRANCH : SOPP <
+  0x00000002, (ins brtarget:$target), "S_BRANCH",
+  []
+>;
+
+let DisableEncoding = "$scc" in {
+def S_CBRANCH_SCC0 : SOPP <
+  0x00000004, (ins brtarget:$target, SCCReg:$scc),
+  "S_CBRANCH_SCC0", []
+>;
+def S_CBRANCH_SCC1 : SOPP <
+  0x00000005, (ins brtarget:$target, SCCReg:$scc),
+  "S_CBRANCH_SCC1",
+  []
+>;
+} // End DisableEncoding = "$scc"
+
+def S_CBRANCH_VCCZ : SOPP <
+  0x00000006, (ins brtarget:$target, VCCReg:$vcc),
+  "S_CBRANCH_VCCZ",
+  []
+>;
+def S_CBRANCH_VCCNZ : SOPP <
+  0x00000007, (ins brtarget:$target, VCCReg:$vcc),
+  "S_CBRANCH_VCCNZ",
+  []
+>;
 //def S_CBRANCH_EXECZ : SOPP_ <0x00000008, "S_CBRANCH_EXECZ", []>;
 //def S_CBRANCH_EXECNZ : SOPP_ <0x00000009, "S_CBRANCH_EXECNZ", []>;
+
+
+} // End isBranch = 1
+} // End isTerminator = 1
+
 //def S_BARRIER : SOPP_ <0x0000000a, "S_BARRIER", []>;
-def S_WAITCNT : SOPP <0x0000000c, (ins i32imm:$simm16), "S_WAITCNT $simm16">;
+def S_WAITCNT : SOPP <0x0000000c, (ins i32imm:$simm16), "S_WAITCNT $simm16",
+  []
+>;
 //def S_SETHALT : SOPP_ <0x0000000d, "S_SETHALT", []>;
 //def S_SLEEP : SOPP_ <0x0000000e, "S_SLEEP", []>;
 //def S_SETPRIO : SOPP_ <0x0000000f, "S_SETPRIO", []>;
@@ -589,11 +663,20 @@ def S_WAITCNT : SOPP <0x0000000c, (ins i32imm:$simm16), "S_WAITCNT $simm16">;
 //def S_TTRACEDATA : SOPP_ <0x00000016, "S_TTRACEDATA", []>;
 
 /* XXX: No VOP3 version of this instruction yet */
-def V_CNDMASK_B32 : VOP2_Helper <
-  0x00000000, VReg_32, AllReg_32, "V_CNDMASK_B32", []> {
-  let VDST = 0;
-  let Uses = [VCC];
+def V_CNDMASK_B32 : VOP2 <0x00000000, (outs VReg_32:$dst),
+  (ins VCCReg:$vcc, AllReg_32:$src0, VReg_32:$src1), "V_CNDMASK_B32",
+  [(set (i32 VReg_32:$dst),
+   (select VCCReg:$vcc, AllReg_32:$src0, VReg_32:$src1))] > {
+
+  let DisableEncoding = "$vcc";
 }
+
+//f32 pattern for V_CNDMASK_B32
+def : Pat <
+  (f32 (select VCCReg:$vcc, AllReg_32:$src0, VReg_32:$src1)),
+  (V_CNDMASK_B32 VCCReg:$vcc, AllReg_32:$src0, VReg_32:$src1)
+>;
+
 defm V_READLANE_B32 : VOP2_32 <0x00000001, "V_READLANE_B32", []>;
 defm V_WRITELANE_B32 : VOP2_32 <0x00000002, "V_WRITELANE_B32", []>;
 
@@ -602,7 +685,9 @@ defm V_ADD_F32 : VOP2_32 <
   [(set VReg_32:$dst, (fadd AllReg_32:$src0, VReg_32:$src1))]
 >;
 
-defm V_SUB_F32 : VOP2_32 <0x00000004, "V_SUB_F32", []>;
+defm V_SUB_F32 : VOP2_32 <0x00000004, "V_SUB_F32",
+  [(set VReg_32:$dst, (fsub AllReg_32:$src0, VReg_32:$src1))]
+>;
 defm V_SUBREV_F32 : VOP2_32 <0x00000005, "V_SUBREV_F32", []>;
 defm V_MAC_LEGACY_F32 : VOP2_32 <0x00000006, "V_MAC_LEGACY_F32", []>;
 defm V_MUL_LEGACY_F32 : VOP2_32 <
@@ -739,10 +824,29 @@ def S_MIN_I32 : SOP2_32 <0x00000006, "S_MIN_I32", []>;
 def S_MIN_U32 : SOP2_32 <0x00000007, "S_MIN_U32", []>;
 def S_MAX_I32 : SOP2_32 <0x00000008, "S_MAX_I32", []>;
 def S_MAX_U32 : SOP2_32 <0x00000009, "S_MAX_U32", []>;
-def S_CSELECT_B32 : SOP2_32 <0x0000000a, "S_CSELECT_B32", []>;
+
+def S_CSELECT_B32 : SOP2 <
+  0x0000000a, (outs SReg_32:$dst),
+  (ins SReg_32:$src0, SReg_32:$src1, SCCReg:$scc), "S_CSELECT_B32",
+  [(set (i32 SReg_32:$dst), (select SCCReg:$scc, SReg_32:$src0, SReg_32:$src1))]
+>;
+
 def S_CSELECT_B64 : SOP2_64 <0x0000000b, "S_CSELECT_B64", []>;
+
+// f32 pattern for S_CSELECT_B32
+def : Pat <
+  (f32 (select SCCReg:$scc, SReg_32:$src0, SReg_32:$src1)),
+  (S_CSELECT_B32 SReg_32:$src0, SReg_32:$src1, SCCReg:$scc)
+>;
+
 def S_AND_B32 : SOP2_32 <0x0000000e, "S_AND_B32", []>;
-def S_AND_B64 : SOP2_64 <0x0000000f, "S_AND_B64", []>;
+
+def S_AND_B64 : SOP2_64 <0x0000000f, "S_AND_B64",
+  [(set SReg_64:$dst, (and SReg_64:$src0, SReg_64:$src1))]
+>;
+def S_AND_VCC : SOP2_VCC <0x0000000f, "S_AND_B64",
+  [(set VCCReg:$vcc, (SIvcc_and SReg_64:$src0, SReg_64:$src1))]
+>;
 def S_OR_B32 : SOP2_32 <0x00000010, "S_OR_B32", []>;
 def S_OR_B64 : SOP2_64 <0x00000011, "S_OR_B64", []>;
 def S_XOR_B32 : SOP2_32 <0x00000012, "S_XOR_B32", []>;
@@ -792,6 +896,17 @@ def S_MOV_IMM_I32 : SOP1 <
   [(set SReg_32:$dst, (imm:$src0))]
 >;
 
+// i64 immediates aren't really supported in hardware, but LLVM will use the i64
+// type for indices on load and store instructions.  The pattern for
+// S_MOV_IMM_I64 will only match i64 immediates that can fit into 32-bits,
+// which the hardware can handle.
+def S_MOV_IMM_I64 : SOP1 <
+  0x3,
+  (outs SReg_64:$dst),
+  (ins i64Literal:$src0),
+  "S_MOV_IMM_I64 $dst, $src0",
+  [(set SReg_64:$dst, (IMM32bitIn64bit:$src0))]
+>;
 
 let isCodeGenOnly = 1, isPseudo = 1 in {
 
@@ -866,6 +981,24 @@ def VS_LOAD_BUFFER_INDEX : InstSI <
 
 } // end usesCustomInserter 
 
+// SI Psuedo branch instructions.  These are used by the CFG structurizer pass
+// and should be lowered to ISA instructions prior to codegen.
+
+let isBranch = 1, isTerminator = 1 in {
+def SI_IF_NZ : InstSI <
+  (outs),
+  (ins brtarget:$target, VCCReg:$vcc),
+  "SI_BRANCH_NZ",
+  [(IL_brcond bb:$target, VCCReg:$vcc)]
+>;
+
+def SI_IF_Z : InstSI <
+  (outs),
+  (ins brtarget:$target, VCCReg:$vcc),
+  "SI_BRANCH_Z",
+  []
+>;
+} // end isBranch = 1, isTerminator = 1
 } // end IsCodeGenOnly, isPseudo
 
 /* int_SI_vs_load_input */
@@ -894,6 +1027,7 @@ def : Pat <
 
 def CLAMP_SI : CLAMP<VReg_32>;
 def FABS_SI : FABS<VReg_32>;
+def FNEG_SI : FNEG<VReg_32>;
 
 def : Extract_Element <f32, v4f32, VReg_128, 0, sel_x>;
 def : Extract_Element <f32, v4f32, VReg_128, 1, sel_y>;
@@ -907,6 +1041,22 @@ def : Insert_Element <f32, v4f32, VReg_32, VReg_128, 7, sel_w>;
 
 def : Vector_Build <v4f32, VReg_32>;
 def : Vector_Build <v4i32, SReg_32>;
+
+def : BitConvert <i32, f32, SReg_32>;
+def : BitConvert <i32, f32, VReg_32>;
+
+def : BitConvert <f32, i32, SReg_32>;
+def : BitConvert <f32, i32, VReg_32>;
+
+def : Pat <
+  (i64 (SIvcc_bitcast VCCReg:$vcc)),
+  (S_MOV_B64 (COPY_TO_REGCLASS VCCReg:$vcc, SReg_64))
+>;
+
+def : Pat <
+  (i1 (SIvcc_bitcast SReg_64:$vcc)),
+  (COPY_TO_REGCLASS SReg_64:$vcc, VCCReg)
+>;
 
 /*
 def : Pat<
@@ -950,6 +1100,11 @@ def : Pat <
 /* llvm.AMDGPU.pow */
 /* XXX: We are using IEEE MUL, not the 0 * anything = 0 MUL, is this correct? */
 def : POW_Common <V_LOG_F32_e32, V_EXP_F32_e32, V_MUL_F32_e32, VReg_32>;
+
+def : Pat <
+  (int_AMDGPU_div AllReg_32:$src0, AllReg_32:$src1),
+  (V_MUL_LEGACY_F32_e32 AllReg_32:$src0, (V_RCP_LEGACY_F32_e32 AllReg_32:$src1))
+>;
 
 /********** ================== **********/
 /**********   VOP3 Patterns    **********/

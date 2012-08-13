@@ -7,7 +7,26 @@
 //
 //===----------------------------------------------------------------------===//
 
+//===----------------------------------------------------------------------===//
+// SI DAG Profiles
+//===----------------------------------------------------------------------===//
+def SDTVCCBinaryOp : SDTypeProfile<1, 2, [
+  SDTCisInt<0>, SDTCisInt<1>, SDTCisSameAs<1, 2>
+]>;
 
+//===----------------------------------------------------------------------===//
+// SI DAG Nodes
+//===----------------------------------------------------------------------===//
+
+// and operation on 64-bit wide vcc
+def SIvcc_and : SDNode<"SIISD::VCC_AND", SDTVCCBinaryOp,
+  [SDNPCommutative, SDNPAssociative]
+>;
+
+// Special bitcast node for sharing VCC register between VALU and SALU
+def SIvcc_bitcast : SDNode<"SIISD::VCC_BITCAST",
+  SDTypeProfile<1, 1, [SDTCisInt<0>, SDTCisInt<1>]>
+>;
 
 class InstSI <dag outs, dag ins, string asm, list<dag> pattern> :
     AMDGPUInst<outs, ins, asm, pattern> {
@@ -37,6 +56,11 @@ class SIOperand <ValueType vt, dag opInfo>: Operand <vt> {
   let MIOperandInfo = opInfo;
 }
 
+def IMM16bit : ImmLeaf <
+  i16,
+  [{return isInt<16>(Imm);}]
+>;
+
 def IMM8bit : ImmLeaf <
   i32,
   [{return (int32_t)Imm >= 0 && (int32_t)Imm <= 0xff;}]
@@ -45,6 +69,11 @@ def IMM8bit : ImmLeaf <
 def IMM12bit : ImmLeaf <
   i16,
   [{return (int16_t)Imm >= 0 && (int16_t)Imm <= 0xfff;}]
+>;
+
+def IMM32bitIn64bit : ImmLeaf <
+  i64,
+  [{return isInt<32>(Imm);}]
 >;
 
 class GPR4Align <RegisterClass rc> : Operand <vAny> {
@@ -58,6 +87,12 @@ class GPR2Align <RegisterClass rc, ValueType vt> : Operand <vt> {
 }
 
 def i32Literal : Operand <i32> {
+  let EncoderMethod = "i32LiteralEncode";
+}
+
+// i64Literal uses the same encoder method as i32 literal, because an
+// i64Literal is really a i32 literal with the top 32-bits all set to zero.
+def i64Literal : Operand <i64> {
   let EncoderMethod = "i32LiteralEncode";
 }
 
@@ -280,6 +315,8 @@ class SOPC <bits<7> op, dag outs, dag ins, string asm, list<dag> pattern> :
   let Inst{22-16} = op;
   let Inst{31-23} = 0x17e;
   let EncodingType = 8; // SIInstrEncodingType::SOPC
+
+  let DisableEncoding = "$dst";
 }
 
 class SOPK <bits<5> op, dag outs, dag ins, string asm, list<dag> pattern> :
@@ -295,11 +332,11 @@ class SOPK <bits<5> op, dag outs, dag ins, string asm, list<dag> pattern> :
   let EncodingType = 9; // SIInstrEncodingType::SOPK
 }
 
-class SOPP <bits<7> op, dag ins, string asm> : Enc32 <
+class SOPP <bits<7> op, dag ins, string asm, list<dag> pattern> : Enc32 <
   (outs),
   ins,
   asm,
-  [] > {
+  pattern > {
 
   bits <16> SIMM16;
 
@@ -388,8 +425,8 @@ class VOP3 <bits<9> op, dag outs, dag ins, string asm, list<dag> pattern> :
   let PostEncoderMethod = "VOPPostEncode";
 }
 
-class VOPC <bits<8> op, dag outs, dag ins, string asm, list<dag> pattern> :
-    Enc32 <outs, ins, asm, pattern> {
+class VOPC <bits<8> op, dag ins, string asm, list<dag> pattern> :
+    Enc32 <(outs VCCReg:$dst), ins, asm, pattern> {
 
   bits<9> SRC0;
   bits<8> VSRC1;
@@ -401,8 +438,7 @@ class VOPC <bits<8> op, dag outs, dag ins, string asm, list<dag> pattern> :
  
   let EncodingType = 15; //SIInstrEncodingType::VOPC
   let PostEncoderMethod = "VOPPostEncode";
-
-  let Defs = [VCC];
+  let DisableEncoding = "$dst";
 }
 
 class MIMG_Load_Helper <bits<7> op, string asm> : MIMG <
@@ -448,9 +484,15 @@ class MTBUF_Store_Helper <bits<3> op, string asm, RegisterClass regClass> : MTBU
   let mayStore = 1;
 }
 
-/*XXX: We should be able to infer the imm bit based on the arg types */
 multiclass SMRD_Helper <bits<5> op, string asm, RegisterClass dstClass,
 			ValueType vt> {
+  def _IMM : SMRD <
+              op,
+              (outs dstClass:$dst),
+              (ins SMRDmemri:$src0),
+              asm,
+              [(set (vt dstClass:$dst), (constant_load ADDR_Offset8:$src0))]
+  >;
 
   def _SGPR : SMRD <
               op,
@@ -458,19 +500,12 @@ multiclass SMRD_Helper <bits<5> op, string asm, RegisterClass dstClass,
               (ins SMRDmemrr:$src0),
               asm,
               [(set (vt dstClass:$dst), (constant_load ADDR_Reg:$src0))]
-  > {
-    let IMM = 0;
-  }
+  >;
+}
 
-  def _IMM : SMRD <
-              op,
-              (outs dstClass:$dst),
-              (ins SMRDmemri:$src0),
-              asm,
-              [(set (vt dstClass:$dst), (constant_load ADDR_Offset8:$src0))]
-  > {
-    let IMM = 1;
-  }
+multiclass SMRD_32 <bits<5> op, string asm, RegisterClass dstClass> {
+  defm _F32 : SMRD_Helper <op, asm, dstClass, f32>;
+  defm _I32 : SMRD_Helper <op, asm, dstClass, i32>;
 }
 
 include "SIInstrFormats.td"

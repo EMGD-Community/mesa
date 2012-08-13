@@ -47,13 +47,13 @@ brw_swap_cmod(uint32_t cmod)
    case BRW_CONDITIONAL_NZ:
       return cmod;
    case BRW_CONDITIONAL_G:
-      return BRW_CONDITIONAL_LE;
-   case BRW_CONDITIONAL_GE:
       return BRW_CONDITIONAL_L;
+   case BRW_CONDITIONAL_GE:
+      return BRW_CONDITIONAL_LE;
    case BRW_CONDITIONAL_L:
-      return BRW_CONDITIONAL_GE;
-   case BRW_CONDITIONAL_LE:
       return BRW_CONDITIONAL_G;
+   case BRW_CONDITIONAL_LE:
+      return BRW_CONDITIONAL_GE;
    default:
       return ~0;
    }
@@ -141,9 +141,9 @@ void brw_set_mask_control( struct brw_compile *p, GLuint value )
    p->current->header.mask_control = value;
 }
 
-void brw_set_saturate( struct brw_compile *p, GLuint value )
+void brw_set_saturate( struct brw_compile *p, bool enable )
 {
-   p->current->header.saturate = value;
+   p->current->header.saturate = enable;
 }
 
 void brw_set_acc_write_control(struct brw_compile *p, GLuint value)

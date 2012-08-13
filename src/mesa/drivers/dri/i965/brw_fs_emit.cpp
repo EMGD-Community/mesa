@@ -160,8 +160,6 @@ fs_visitor::generate_math1_gen7(fs_inst *inst,
    assert(inst->mlen == 0);
    brw_math(p, dst,
 	    brw_math_function(inst->opcode),
-	    inst->saturate ? BRW_MATH_SATURATE_SATURATE
-			   : BRW_MATH_SATURATE_NONE,
 	    0, src0,
 	    BRW_MATH_DATA_VECTOR,
 	    BRW_MATH_PRECISION_FULL);
@@ -189,8 +187,6 @@ fs_visitor::generate_math1_gen6(fs_inst *inst,
    brw_set_compression_control(p, BRW_COMPRESSION_NONE);
    brw_math(p, dst,
 	    op,
-	    inst->saturate ? BRW_MATH_SATURATE_SATURATE :
-	    BRW_MATH_SATURATE_NONE,
 	    0, src0,
 	    BRW_MATH_DATA_VECTOR,
 	    BRW_MATH_PRECISION_FULL);
@@ -199,8 +195,6 @@ fs_visitor::generate_math1_gen6(fs_inst *inst,
       brw_set_compression_control(p, BRW_COMPRESSION_2NDHALF);
       brw_math(p, sechalf(dst),
 	       op,
-	       inst->saturate ? BRW_MATH_SATURATE_SATURATE :
-	       BRW_MATH_SATURATE_NONE,
 	       0, sechalf(src0),
 	       BRW_MATH_DATA_VECTOR,
 	       BRW_MATH_PRECISION_FULL);
@@ -240,8 +234,6 @@ fs_visitor::generate_math_gen4(fs_inst *inst,
    brw_set_compression_control(p, BRW_COMPRESSION_NONE);
    brw_math(p, dst,
 	    op,
-	    inst->saturate ? BRW_MATH_SATURATE_SATURATE :
-	    BRW_MATH_SATURATE_NONE,
 	    inst->base_mrf, src,
 	    BRW_MATH_DATA_VECTOR,
 	    BRW_MATH_PRECISION_FULL);
@@ -250,8 +242,6 @@ fs_visitor::generate_math_gen4(fs_inst *inst,
       brw_set_compression_control(p, BRW_COMPRESSION_2NDHALF);
       brw_math(p, sechalf(dst),
 	       op,
-	       inst->saturate ? BRW_MATH_SATURATE_SATURATE :
-	       BRW_MATH_SATURATE_NONE,
 	       inst->base_mrf + 1, sechalf(src),
 	       BRW_MATH_DATA_VECTOR,
 	       BRW_MATH_PRECISION_FULL);
@@ -381,6 +371,27 @@ fs_visitor::generate_tex(fs_inst *inst, struct brw_reg dst, struct brw_reg src)
       dst = vec16(dst);
    }
 
+   /* Load the message header if present.  If there's a texture offset,
+    * we need to set it up explicitly and load the offset bitfield.
+    * Otherwise, we can use an implied move from g0 to the first message reg.
+    */
+   if (inst->texture_offset) {
+      brw_push_insn_state(p);
+      brw_set_compression_control(p, BRW_COMPRESSION_NONE);
+      /* Explicitly set up the message header by copying g0 to the MRF. */
+      brw_MOV(p, retype(brw_message_reg(inst->base_mrf), BRW_REGISTER_TYPE_UD),
+                 retype(brw_vec8_grf(0, 0), BRW_REGISTER_TYPE_UD));
+
+      /* Then set the offset bits in DWord 2. */
+      brw_MOV(p, retype(brw_vec1_reg(BRW_MESSAGE_REGISTER_FILE,
+                                     inst->base_mrf, 2), BRW_REGISTER_TYPE_UD),
+                 brw_imm_ud(inst->texture_offset));
+      brw_pop_insn_state(p);
+   } else if (inst->header_present) {
+      /* Set up an implied move from g0 to the MRF. */
+      src = retype(brw_vec8_grf(0, 0), BRW_REGISTER_TYPE_UW);
+   }
+
    brw_SAMPLE(p,
 	      retype(dst, BRW_REGISTER_TYPE_UW),
 	      inst->base_mrf,
@@ -441,8 +452,13 @@ fs_visitor::generate_ddx(fs_inst *inst, struct brw_reg dst, struct brw_reg src)
    brw_ADD(p, dst, src0, negate(src1));
 }
 
+/* The negate_value boolean is used to negate the derivative computation for
+ * FBOs, since they place the origin at the upper left instead of the lower
+ * left.
+ */
 void
-fs_visitor::generate_ddy(fs_inst *inst, struct brw_reg dst, struct brw_reg src)
+fs_visitor::generate_ddy(fs_inst *inst, struct brw_reg dst, struct brw_reg src,
+                         bool negate_value)
 {
    struct brw_reg src0 = brw_reg(src.file, src.nr, 0,
 				 BRW_REGISTER_TYPE_F,
@@ -456,7 +472,10 @@ fs_visitor::generate_ddy(fs_inst *inst, struct brw_reg dst, struct brw_reg src)
 				 BRW_WIDTH_4,
 				 BRW_HORIZONTAL_STRIDE_0,
 				 BRW_SWIZZLE_XYZW, WRITEMASK_XYZW);
-   brw_ADD(p, dst, src0, negate(src1));
+   if (negate_value)
+      brw_ADD(p, dst, src1, negate(src0));
+   else
+      brw_ADD(p, dst, src0, negate(src1));
 }
 
 void
@@ -554,7 +573,9 @@ fs_visitor::generate_unspill(fs_inst *inst, struct brw_reg dst)
 }
 
 void
-fs_visitor::generate_pull_constant_load(fs_inst *inst, struct brw_reg dst)
+fs_visitor::generate_pull_constant_load(fs_inst *inst, struct brw_reg dst,
+					struct brw_reg index,
+					struct brw_reg offset)
 {
    assert(inst->mlen != 0);
 
@@ -571,8 +592,16 @@ fs_visitor::generate_pull_constant_load(fs_inst *inst, struct brw_reg dst)
    if (intel->gen == 4 && !intel->is_g4x)
       brw_MOV(p, brw_null_reg(), dst);
 
+   assert(index.file == BRW_IMMEDIATE_VALUE &&
+	  index.type == BRW_REGISTER_TYPE_UD);
+   uint32_t surf_index = index.dw1.ud;
+
+   assert(offset.file == BRW_IMMEDIATE_VALUE &&
+	  offset.type == BRW_REGISTER_TYPE_UD);
+   uint32_t read_offset = offset.dw1.ud;
+
    brw_oword_block_read(p, dst, brw_message_reg(inst->base_mrf),
-			inst->offset, SURF_INDEX_FRAG_CONST_BUFFER);
+			read_offset, surf_index);
 
    if (intel->gen == 4 && !intel->is_g4x) {
       /* gen4 errata: destination from a send can't be used as a
@@ -582,6 +611,27 @@ fs_visitor::generate_pull_constant_load(fs_inst *inst, struct brw_reg dst)
       brw_MOV(p, brw_null_reg(), dst);
    }
 }
+
+
+/**
+ * Cause the current pixel/sample mask (from R1.7 bits 15:0) to be transferred
+ * into the flags register (f0.0).
+ *
+ * Used only on Gen6 and above.
+ */
+void
+fs_visitor::generate_mov_dispatch_to_flags()
+{
+   struct brw_reg f0 = brw_flag_reg();
+   struct brw_reg g1 = retype(brw_vec1_grf(1, 7), BRW_REGISTER_TYPE_UW);
+
+   assert (intel->gen >= 6);
+   brw_push_insn_state(p);
+   brw_set_mask_control(p, BRW_MASK_DISABLE);
+   brw_MOV(p, f0, g1);
+   brw_pop_insn_state(p);
+}
+
 
 static uint32_t brw_file_from_reg(fs_reg *reg)
 {
@@ -902,7 +952,11 @@ fs_visitor::generate_code()
 	 generate_ddx(inst, dst, src[0]);
 	 break;
       case FS_OPCODE_DDY:
-	 generate_ddy(inst, dst, src[0]);
+         /* Make sure fp->UsesDFdy flag got set (otherwise there's no
+          * guarantee that c->key.render_to_fbo is set).
+          */
+         assert(fp->UsesDFdy);
+	 generate_ddy(inst, dst, src[0], c->key.render_to_fbo);
 	 break;
 
       case FS_OPCODE_SPILL:
@@ -914,12 +968,17 @@ fs_visitor::generate_code()
 	 break;
 
       case FS_OPCODE_PULL_CONSTANT_LOAD:
-	 generate_pull_constant_load(inst, dst);
+	 generate_pull_constant_load(inst, dst, src[0], src[1]);
 	 break;
 
       case FS_OPCODE_FB_WRITE:
 	 generate_fb_write(inst);
 	 break;
+
+      case FS_OPCODE_MOV_DISPATCH_TO_FLAGS:
+         generate_mov_dispatch_to_flags();
+         break;
+
       default:
 	 if (inst->opcode < (int)ARRAY_SIZE(brw_opcodes)) {
 	    _mesa_problem(ctx, "Unsupported opcode `%s' in FS",

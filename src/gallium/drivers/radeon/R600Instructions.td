@@ -23,7 +23,7 @@ class InstR600 <bits<32> inst, dag outs, dag ins, string asm, list<dag> pattern,
   bit isVector = 0; 
 
   let Inst = inst;
-  let Namespace = "AMDIL";
+  let Namespace = "AMDGPU";
   let OutOperandList = outs;
   let InOperandList = ins;
   let AsmString = asm;
@@ -43,7 +43,7 @@ class InstR600ISA <dag outs, dag ins, string asm, list<dag> pattern> :
 {
   field bits<64> Inst;
 
-  let Namespace = "AMDIL";
+  let Namespace = "AMDGPU";
 }
 
 def MEMxi : Operand<iPTR> {
@@ -130,47 +130,6 @@ def TEX_SHADOW : PatLeaf<
   }]
 >;
 
-def COND_EQ : PatLeaf <
-  (cond),
-  [{switch(N->get()){{default: return false;
-                     case ISD::SETOEQ: case ISD::SETUEQ:
-                     case ISD::SETEQ: return true;}}}]
->;
-
-def COND_NE : PatLeaf <
-  (cond),
-  [{switch(N->get()){{default: return false;
-                     case ISD::SETONE: case ISD::SETUNE:
-                     case ISD::SETNE: return true;}}}]
->;
-def COND_GT : PatLeaf <
-  (cond),
-  [{switch(N->get()){{default: return false;
-                     case ISD::SETOGT: case ISD::SETUGT:
-                     case ISD::SETGT: return true;}}}]
->;
-
-def COND_GE : PatLeaf <
-  (cond),
-  [{switch(N->get()){{default: return false;
-                     case ISD::SETOGE: case ISD::SETUGE:
-                     case ISD::SETGE: return true;}}}]
->;
-
-def COND_LT : PatLeaf <
-  (cond),
-  [{switch(N->get()){{default: return false;
-                     case ISD::SETOLT: case ISD::SETULT:
-                     case ISD::SETLT: return true;}}}]
->;
-
-def COND_LE : PatLeaf <
-  (cond),
-  [{switch(N->get()){{default: return false;
-                     case ISD::SETOLE: case ISD::SETULE:
-                     case ISD::SETLE: return true;}}}]
->;
-
 class EG_CF_RAT <bits <8> cf_inst, bits <6> rat_inst, bits<4> rat_id, dag outs,
                  dag ins, string asm, list<dag> pattern> :
     InstR600ISA <outs, ins, asm, pattern>
@@ -234,7 +193,7 @@ def load_param : PatFrag<(ops node:$ptr),
                            const Value *Src = cast<LoadSDNode>(N)->getSrcValue();
                            if (Src) {
                                 PointerType * PT = dyn_cast<PointerType>(Src->getType());
-                                return PT && PT->getAddressSpace() == AMDILAS::PARAM_I_ADDRESS;
+                                return PT && PT->getAddressSpace() == AMDGPUAS::PARAM_I_ADDRESS;
                            }
                            return false;
                           }]>;
@@ -270,19 +229,23 @@ def load_param : PatFrag<(ops node:$ptr),
 //}
 */
 def isR600 : Predicate<"Subtarget.device()"
-                            "->getGeneration() == AMDILDeviceInfo::HD4XXX">;
+                            "->getGeneration() == AMDGPUDeviceInfo::HD4XXX">;
+def isR700 : Predicate<"Subtarget.device()"
+                            "->getGeneration() == AMDGPUDeviceInfo::HD4XXX &&"
+                            "Subtarget.device()->getDeviceFlag()"
+                            ">= OCL_DEVICE_RV710">;
 def isEG : Predicate<"Subtarget.device()"
-                            "->getGeneration() >= AMDILDeviceInfo::HD5XXX && "
+                            "->getGeneration() >= AMDGPUDeviceInfo::HD5XXX && "
                             "Subtarget.device()->getDeviceFlag() != OCL_DEVICE_CAYMAN">;
 def isCayman : Predicate<"Subtarget.device()"
                             "->getDeviceFlag() == OCL_DEVICE_CAYMAN">;
 def isEGorCayman : Predicate<"Subtarget.device()"
-                            "->getGeneration() == AMDILDeviceInfo::HD5XXX"
+                            "->getGeneration() == AMDGPUDeviceInfo::HD5XXX"
 			    "|| Subtarget.device()->getGeneration() =="
-			    "AMDILDeviceInfo::HD6XXX">;
+			    "AMDGPUDeviceInfo::HD6XXX">;
 
 def isR600toCayman : Predicate<
-                     "Subtarget.device()->getGeneration() <= AMDILDeviceInfo::HD6XXX">;
+                     "Subtarget.device()->getGeneration() <= AMDGPUDeviceInfo::HD6XXX">;
 
 
 let Predicates = [isR600toCayman] in { 
@@ -487,7 +450,7 @@ def SETGE_UINT : R600_2OP <
 def CNDE_INT : R600_3OP <
 	0x1C, "CNDE_INT",
   [(set (i32 R600_Reg32:$dst),
-   (IL_cmov_logical R600_Reg32:$src0, R600_Reg32:$src2, R600_Reg32:$src1))]
+   (select R600_Reg32:$src0, R600_Reg32:$src2, R600_Reg32:$src1))]
 >;
 
 /* Texture instructions */
@@ -582,7 +545,7 @@ class MULADD_Common <bits<32> inst> : R600_3OP <
 class CNDE_Common <bits<32> inst> : R600_3OP <
   inst, "CNDE",
   [(set (f32 R600_Reg32:$dst),
-   (IL_cmov_logical R600_Reg32:$src0, R600_Reg32:$src2, R600_Reg32:$src1))]
+   (select (i32 (fp_to_sint (fneg R600_Reg32:$src0))), (f32 R600_Reg32:$src2), (f32 R600_Reg32:$src1)))]
 >;
 
 class CNDGT_Common <bits<32> inst> : R600_3OP <
@@ -707,14 +670,12 @@ class RECIPSQRT_IEEE_Common <bits<32> inst> : R600_1OP <
 >;
 
 class SIN_Common <bits<32> inst> : R600_1OP <
-  inst, "SIN",
-  [(set R600_Reg32:$dst, (int_AMDIL_sin R600_Reg32:$src))]>{
+  inst, "SIN", []>{
   let Trig = 1;
 }
 
 class COS_Common <bits<32> inst> : R600_1OP <
-  inst, "COS",
-  [(set R600_Reg32:$dst, (int_AMDIL_cos R600_Reg32:$src))]> {
+  inst, "COS", []> {
   let Trig = 1;
 }
 
@@ -778,16 +739,25 @@ let Predicates = [isR600] in {
 
 }
 
-/* ----------------- */
-/* R700+ Trig helper */
-/* ----------------- */
-
-/*
-class TRIG_HELPER_r700 <InstR600 trig_inst>: Pat <
-  (trig_inst R600_Reg32:$src),
-  (trig_inst (fmul R600_Reg32:$src, (PI))))
+// Helper pattern for normalizing inputs to triginomic instructions for R700+
+// cards.
+class TRIG_eg <InstR600 trig, Intrinsic intr> : Pat<
+  (intr R600_Reg32:$src),
+  (trig (MUL (MOV_IMM_I32 (i32 ALU_LITERAL_X), CONST.TWO_PI_INV), R600_Reg32:$src))
 >;
-*/
+
+//===----------------------------------------------------------------------===//
+// R700 Only instructions
+//===----------------------------------------------------------------------===//
+
+let Predicates = [isR700] in {
+  def SIN_r700 : SIN_Common<0x6E>;
+  def COS_r700 : COS_Common<0x6F>;
+
+  // R700 normalizes inputs to SIN/COS the same as EG
+  def : TRIG_eg <SIN_r700, int_AMDGPU_sin>;
+  def : TRIG_eg <COS_r700, int_AMDGPU_cos>;
+}
 
 //===----------------------------------------------------------------------===//
 // Evergreen Only instructions
@@ -810,11 +780,33 @@ def RECIP_UINT_eg : RECIP_UINT_Common<0x94>;
 /* ------------------------------- */
 
 let Predicates = [isEGorCayman] in {
-  
-class TRIG_eg <InstR600 trig, Intrinsic intr> : Pat<
-  (intr R600_Reg32:$src),
-  (trig (MUL (MOV_IMM_I32 (i32 ALU_LITERAL_X), CONST.TWO_PI_INV), R600_Reg32:$src))
->;
+
+  // BFE_UINT - bit_extract, an optimization for mask and shift
+  // Src0 = Input
+  // Src1 = Offset
+  // Src2 = Width
+  //
+  // bit_extract = (Input << (32 - Offset - Width)) >> (32 - Width)
+  //
+  // Example Usage:
+  // (Offset, Width)
+  //
+  // (0, 8)           = (Input << 24) >> 24  = (Input &  0xff)       >> 0
+  // (8, 8)           = (Input << 16) >> 24  = (Input &  0xffff)     >> 8
+  // (16,8)           = (Input <<  8) >> 24  = (Input &  0xffffff)   >> 16
+  // (24,8)           = (Input <<  0) >> 24  = (Input &  0xffffffff) >> 24
+  def BFE_UINT_eg : R600_3OP <0x4, "BFE_UINT",
+    [(set R600_Reg32:$dst, (int_AMDIL_bit_extract_u32 R600_Reg32:$src0,
+                                                      R600_Reg32:$src1,
+                                                      R600_Reg32:$src2))],
+    VecALU
+  >;
+
+  def BIT_ALIGN_INT_eg : R600_3OP <0xC, "BIT_ALIGN_INT",
+    [(set R600_Reg32:$dst, (AMDGPUbitalign R600_Reg32:$src0, R600_Reg32:$src1,
+                                          R600_Reg32:$src2))],
+    VecALU
+  >;
 
   def MULADD_eg : MULADD_Common<0x14>;
   def ASHR_eg : ASHR_Common<0x15>;
@@ -889,20 +881,149 @@ def RAT_WRITE_CACHELESS_eg : EG_CF_RAT <0x57, 0x2, 0, (outs),
 
 } // End usesCustomInserter = 1
 
-class VTX_READ_eg <int buffer_id, list<dag> pattern> : InstR600ISA <
-  (outs R600_TReg32_X:$dst),
-  (ins MEMxi:$ptr),
-  "VTX_READ_eg $dst, $ptr",
-  pattern
+// Floating point global_store
+def : Pat <
+  (global_store (f32 R600_TReg32_X:$val), R600_TReg32_X:$ptr),
+  (RAT_WRITE_CACHELESS_eg R600_TReg32_X:$val, R600_TReg32_X:$ptr)
 >;
 
-def VTX_READ_PARAM_eg : VTX_READ_eg <0,
-  [(set (i32 R600_TReg32_X:$dst), (load_param ADDRVTX_READ:$ptr))]
+class VTX_READ_eg <bits<8> buffer_id, dag outs, list<dag> pattern>
+    : InstR600ISA <outs, (ins MEMxi:$ptr), "VTX_READ_eg $dst, $ptr", pattern> {
+
+  // Operands
+  bits<7> DST_GPR;
+  bits<7> SRC_GPR;
+
+  // Static fields
+  bits<5> VC_INST = 0;
+  bits<2> FETCH_TYPE = 2;
+  bits<1> FETCH_WHOLE_QUAD = 0;
+  bits<8> BUFFER_ID = buffer_id;
+  bits<1> SRC_REL = 0;
+  // XXX: We can infer this field based on the SRC_GPR.  This would allow us
+  // to store vertex addresses in any channel, not just X.
+  bits<2> SRC_SEL_X = 0;
+  bits<6> MEGA_FETCH_COUNT;
+  bits<1> DST_REL = 0;
+  bits<3> DST_SEL_X;
+  bits<3> DST_SEL_Y;
+  bits<3> DST_SEL_Z;
+  bits<3> DST_SEL_W;
+  // The docs say that if this bit is set, then DATA_FORMAT, NUM_FORMAT_ALL,
+  // FORMAT_COMP_ALL, SRF_MODE_ALL, and ENDIAN_SWAP fields will be ignored,
+  // however, based on my testing if USE_CONST_FIELDS is set, then all
+  // these fields need to be set to 0.
+  bits<1> USE_CONST_FIELDS = 0;
+  bits<6> DATA_FORMAT;
+  bits<2> NUM_FORMAT_ALL = 1;
+  bits<1> FORMAT_COMP_ALL = 0;
+  bits<1> SRF_MODE_ALL = 0;
+
+  // LLVM can only encode 64-bit instructions, so these fields are manually
+  // encoded in R600CodeEmitter
+  //
+  // bits<16> OFFSET;
+  // bits<2>  ENDIAN_SWAP = 0;
+  // bits<1>  CONST_BUF_NO_STRIDE = 0;
+  // bits<1>  MEGA_FETCH = 0;
+  // bits<1>  ALT_CONST = 0;
+  // bits<2>  BUFFER_INDEX_MODE = 0;
+
+  // VTX_WORD0
+  let Inst{4-0}   = VC_INST;
+  let Inst{6-5}   = FETCH_TYPE;
+  let Inst{7}     = FETCH_WHOLE_QUAD;
+  let Inst{15-8}  = BUFFER_ID;
+  let Inst{22-16} = SRC_GPR;
+  let Inst{23}    = SRC_REL;
+  let Inst{25-24} = SRC_SEL_X;
+  let Inst{31-26} = MEGA_FETCH_COUNT;
+
+  // VTX_WORD1_GPR
+  let Inst{38-32} = DST_GPR;
+  let Inst{39}    = DST_REL;
+  let Inst{40}    = 0; // Reserved
+  let Inst{43-41} = DST_SEL_X;
+  let Inst{46-44} = DST_SEL_Y;
+  let Inst{49-47} = DST_SEL_Z;
+  let Inst{52-50} = DST_SEL_W;
+  let Inst{53}    = USE_CONST_FIELDS;
+  let Inst{59-54} = DATA_FORMAT;
+  let Inst{61-60} = NUM_FORMAT_ALL;
+  let Inst{62}    = FORMAT_COMP_ALL;
+  let Inst{63}    = SRF_MODE_ALL;
+
+  // VTX_WORD2 (LLVM can only encode 64-bit instructions, so WORD2 encoding
+  // is done in R600CodeEmitter
+  //
+  // Inst{79-64} = OFFSET;
+  // Inst{81-80} = ENDIAN_SWAP;
+  // Inst{82}    = CONST_BUF_NO_STRIDE;
+  // Inst{83}    = MEGA_FETCH;
+  // Inst{84}    = ALT_CONST;
+  // Inst{86-85} = BUFFER_INDEX_MODE;
+  // Inst{95-86} = 0; Reserved
+
+  // VTX_WORD3 (Padding)
+  //
+  // Inst{127-96} = 0;
+}
+
+class VTX_READ_32_eg <bits<8> buffer_id, list<dag> pattern>
+    : VTX_READ_eg <buffer_id, (outs R600_TReg32_X:$dst), pattern> {
+
+  let MEGA_FETCH_COUNT = 4;
+  let DST_SEL_X        = 0;
+  let DST_SEL_Y        = 7;   // Masked
+  let DST_SEL_Z        = 7;   // Masked
+  let DST_SEL_W        = 7;   // Masked
+  let DATA_FORMAT      = 0xD; // COLOR_32
+}
+
+class VTX_READ_128_eg <bits<8> buffer_id, list<dag> pattern>
+    : VTX_READ_eg <buffer_id, (outs R600_Reg128:$dst), pattern> {
+
+  let MEGA_FETCH_COUNT = 16;
+  let DST_SEL_X        =  0;
+  let DST_SEL_Y        =  1;
+  let DST_SEL_Z        =  2;
+  let DST_SEL_W        =  3;
+  let DATA_FORMAT      =  0x22; // COLOR_32_32_32_32
+}
+
+//===----------------------------------------------------------------------===//
+// VTX Read from parameter memory space
+//===----------------------------------------------------------------------===//
+
+class VTX_READ_PARAM_32_eg <ValueType vt> : VTX_READ_32_eg <0,
+  [(set (vt R600_TReg32_X:$dst), (load_param ADDRVTX_READ:$ptr))]
 >;
 
-def VTX_READ_GLOBAL_eg : VTX_READ_eg <1,
-  [(set (i32 R600_TReg32_X:$dst), (global_load ADDRVTX_READ:$ptr))]
+def VTX_READ_PARAM_i32_eg : VTX_READ_PARAM_32_eg<i32>;
+def VTX_READ_PARAM_f32_eg : VTX_READ_PARAM_32_eg<f32>;
+
+
+//===----------------------------------------------------------------------===//
+// VTX Read from global memory space
+//===----------------------------------------------------------------------===//
+
+// 32-bit reads
+
+class VTX_READ_GLOBAL_eg <ValueType vt> : VTX_READ_32_eg <1,
+  [(set (vt R600_TReg32_X:$dst), (global_load ADDRVTX_READ:$ptr))]
 >;
+
+def VTX_READ_GLOBAL_i32_eg : VTX_READ_GLOBAL_eg<i32>;
+def VTX_READ_GLOBAL_f32_eg : VTX_READ_GLOBAL_eg<f32>;
+
+// 128-bit reads
+
+class VTX_READ_GLOBAL_128_eg <ValueType vt> : VTX_READ_128_eg <1,
+  [(set (vt R600_Reg128:$dst), (global_load ADDRVTX_READ:$ptr))]
+>;
+
+def VTX_READ_GLOBAL_v4i32_eg : VTX_READ_GLOBAL_128_eg<v4i32>;
+def VTX_READ_GLOBAL_v4f32_eg : VTX_READ_GLOBAL_128_eg<v4f32>;
 
 }
 
@@ -1155,5 +1276,6 @@ def : Vector_Build <v4i32, R600_Reg32>;
 
 def : BitConvert <i32, f32, R600_Reg32>;
 def : BitConvert <f32, i32, R600_Reg32>;
+def : BitConvert <v4f32, v4i32, R600_Reg128>;
 
 } // End isR600toCayman Predicate

@@ -13,7 +13,12 @@
 
 #include "R600InstrInfo.h"
 #include "AMDGPUTargetMachine.h"
+#include "AMDGPUSubtarget.h"
 #include "R600RegisterInfo.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
+
+#define GET_INSTRINFO_CTOR
+#include "AMDGPUGenDFAPacketizer.inc"
 
 using namespace llvm;
 
@@ -45,12 +50,13 @@ R600InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                            bool KillSrc) const
 {
 
-  unsigned subRegMap[4] = {AMDIL::sel_x, AMDIL::sel_y, AMDIL::sel_z, AMDIL::sel_w};
+  unsigned subRegMap[4] = {AMDGPU::sel_x, AMDGPU::sel_y,
+                           AMDGPU::sel_z, AMDGPU::sel_w};
 
-  if (AMDIL::R600_Reg128RegClass.contains(DestReg)
-      && AMDIL::R600_Reg128RegClass.contains(SrcReg)) {
+  if (AMDGPU::R600_Reg128RegClass.contains(DestReg)
+      && AMDGPU::R600_Reg128RegClass.contains(SrcReg)) {
     for (unsigned i = 0; i < 4; i++) {
-      BuildMI(MBB, MI, DL, get(AMDIL::MOV))
+      BuildMI(MBB, MI, DL, get(AMDGPU::MOV))
               .addReg(RI.getSubReg(DestReg, subRegMap[i]), RegState::Define)
               .addReg(RI.getSubReg(SrcReg, subRegMap[i]))
               .addReg(DestReg, RegState::Define | RegState::Implicit);
@@ -58,10 +64,10 @@ R600InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
   } else {
 
     /* We can't copy vec4 registers */
-    assert(!AMDIL::R600_Reg128RegClass.contains(DestReg)
-           && !AMDIL::R600_Reg128RegClass.contains(SrcReg));
+    assert(!AMDGPU::R600_Reg128RegClass.contains(DestReg)
+           && !AMDGPU::R600_Reg128RegClass.contains(SrcReg));
 
-    BuildMI(MBB, MI, DL, get(AMDIL::MOV), DestReg)
+    BuildMI(MBB, MI, DL, get(AMDGPU::MOV), DestReg)
       .addReg(SrcReg, getKillRegState(KillSrc));
   }
 }
@@ -69,9 +75,9 @@ R600InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
 MachineInstr * R600InstrInfo::getMovImmInstr(MachineFunction *MF,
                                              unsigned DstReg, int64_t Imm) const
 {
-  MachineInstr * MI = MF->CreateMachineInstr(get(AMDIL::MOV), DebugLoc());
+  MachineInstr * MI = MF->CreateMachineInstr(get(AMDGPU::MOV), DebugLoc());
   MachineInstrBuilder(MI).addReg(DstReg, RegState::Define);
-  MachineInstrBuilder(MI).addReg(AMDIL::ALU_LITERAL_X);
+  MachineInstrBuilder(MI).addReg(AMDGPU::ALU_LITERAL_X);
   MachineInstrBuilder(MI).addImm(Imm);
 
   return MI;
@@ -79,16 +85,23 @@ MachineInstr * R600InstrInfo::getMovImmInstr(MachineFunction *MF,
 
 unsigned R600InstrInfo::getIEQOpcode() const
 {
-  return AMDIL::SETE_INT;
+  return AMDGPU::SETE_INT;
 }
 
 bool R600InstrInfo::isMov(unsigned Opcode) const
 {
   switch(Opcode) {
   default: return false;
-  case AMDIL::MOV:
-  case AMDIL::MOV_IMM_F32:
-  case AMDIL::MOV_IMM_I32:
+  case AMDGPU::MOV:
+  case AMDGPU::MOV_IMM_F32:
+  case AMDGPU::MOV_IMM_I32:
     return true;
   }
+}
+
+DFAPacketizer *R600InstrInfo::CreateTargetScheduleState(const TargetMachine *TM,
+    const ScheduleDAG *DAG) const
+{
+  const InstrItineraryData *II = TM->getInstrItineraryData();
+  return TM->getSubtarget<AMDGPUSubtarget>().createDFAPacketizer(II);
 }

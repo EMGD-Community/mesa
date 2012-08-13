@@ -26,7 +26,8 @@
 #include "r600.h"
 
 /* flag to indicate a resource is to be used as a transfer so should not be tiled */
-#define R600_RESOURCE_FLAG_TRANSFER     PIPE_RESOURCE_FLAG_DRV_PRIV
+#define R600_RESOURCE_FLAG_TRANSFER		PIPE_RESOURCE_FLAG_DRV_PRIV
+#define R600_RESOURCE_FLAG_FLUSHED_DEPTH	(PIPE_RESOURCE_FLAG_DRV_PRIV << 1)
 
 struct r600_transfer {
 	struct pipe_transfer		transfer;
@@ -51,15 +52,14 @@ struct r600_resource_texture {
 
 	unsigned			offset[PIPE_MAX_TEXTURE_LEVELS];
 	unsigned			pitch_in_bytes[PIPE_MAX_TEXTURE_LEVELS];  /* transfer */
-	unsigned			pitch_in_blocks[PIPE_MAX_TEXTURE_LEVELS]; /* texture resource */
 	unsigned			layer_size[PIPE_MAX_TEXTURE_LEVELS];
 	unsigned			array_mode[PIPE_MAX_TEXTURE_LEVELS];
 	unsigned			pitch_override;
 	unsigned			size;
 	unsigned			tile_type;
 	bool				is_depth;
-	unsigned			dirty_db;
-	struct r600_resource_texture    *stencil; /* Stencil is in a separate buffer on Evergreen. */
+	bool				is_rat;
+	unsigned			dirty_db_mask; /* each bit says if that miplevel is dirty */
 	struct r600_resource_texture	*flushed_depth_texture;
 	boolean				is_flushing_texture;
 	struct radeon_surface		surface;
@@ -69,7 +69,35 @@ struct r600_resource_texture {
 
 struct r600_surface {
 	struct pipe_surface		base;
-	unsigned			aligned_height;
+
+	bool color_initialized;
+	bool depth_initialized;
+
+	/* Misc. color flags. */
+	bool alphatest_bypass;
+	bool export_16bpc;
+
+	/* Color registers. */
+	unsigned cb_color_info;
+	unsigned cb_color_base;
+	unsigned cb_color_view;
+	unsigned cb_color_size;		/* R600 only */
+	unsigned cb_color_frag;		/* R600 only */
+	unsigned cb_color_tile;		/* R600 only */
+	unsigned cb_color_dim;		/* EG only */
+	unsigned cb_color_pitch;	/* EG only */
+	unsigned cb_color_slice;	/* EG only */
+	unsigned cb_color_attrib;	/* EG only */
+
+	/* DB registers. */
+	unsigned db_depth_info;		/* DB_Z_INFO (EG) or DB_DEPTH_INFO (r600) */
+	unsigned db_depth_base;		/* DB_Z_READ/WRITE_BASE (EG) or DB_DEPTH_BASE (r600) */
+	unsigned db_depth_view;
+	unsigned db_depth_size;
+	unsigned db_depth_slice;	/* EG only */
+	unsigned db_stencil_base;	/* EG only */
+	unsigned db_stencil_info;	/* EG only */
+	unsigned db_prefetch_limit;	/* R600 only */
 };
 
 void r600_resource_destroy(struct pipe_screen *screen, struct pipe_resource *res);
@@ -87,7 +115,9 @@ static INLINE struct r600_resource *r600_resource(struct pipe_resource *r)
 	return (struct r600_resource*)r;
 }
 
-int r600_texture_depth_flush(struct pipe_context *ctx, struct pipe_resource *texture, boolean just_create);
+bool r600_init_flushed_depth_texture(struct pipe_context *ctx,
+				     struct pipe_resource *texture,
+				     struct r600_resource_texture **staging);
 
 /* r600_texture.c texture transfer functions. */
 struct pipe_transfer* r600_texture_get_transfer(struct pipe_context *ctx,

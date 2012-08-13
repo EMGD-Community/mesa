@@ -47,6 +47,7 @@
 #include "texstate.h"
 #include "texpal.h"
 #include "mtypes.h"
+#include "glformats.h"
 
 
 /**
@@ -129,10 +130,19 @@ _mesa_base_tex_format( struct gl_context *ctx, GLint internalFormat )
 
    /* GL_BGRA can be an internal format *only* in OpenGL ES (1.x or 2.0).
     */
-   if (ctx->API != API_OPENGL) {
+   if (_mesa_is_gles(ctx)) {
       switch (internalFormat) {
          case GL_BGRA:
             return GL_RGBA;
+         default:
+            ; /* fallthrough */
+      }
+   }
+
+   if (ctx->Extensions.ARB_ES2_compatibility) {
+      switch (internalFormat) {
+         case GL_RGB565:
+            return GL_RGB;
          default:
             ; /* fallthrough */
       }
@@ -322,7 +332,7 @@ _mesa_base_tex_format( struct gl_context *ctx, GLint internalFormat )
    }
 #endif /* FEATURE_EXT_texture_sRGB */
 
-   if (ctx->VersionMajor >= 3 ||
+   if (ctx->Version >= 30 ||
        ctx->Extensions.EXT_texture_integer) {
       switch (internalFormat) {
       case GL_RGBA8UI_EXT:
@@ -396,7 +406,7 @@ _mesa_base_tex_format( struct gl_context *ctx, GLint internalFormat )
       case GL_R16UI:
       case GL_R32I:
       case GL_R32UI:
-	 if (ctx->VersionMajor < 3 && !ctx->Extensions.EXT_texture_integer)
+	 if (ctx->Version < 30 && !ctx->Extensions.EXT_texture_integer)
 	    break;
 	 /* FALLTHROUGH */
       case GL_R8:
@@ -421,7 +431,7 @@ _mesa_base_tex_format( struct gl_context *ctx, GLint internalFormat )
       case GL_RG16UI:
       case GL_RG32I:
       case GL_RG32UI:
-	 if (ctx->VersionMajor < 3 && !ctx->Extensions.EXT_texture_integer)
+	 if (ctx->Version < 30 && !ctx->Extensions.EXT_texture_integer)
 	    break;
 	 /* FALLTHROUGH */
       case GL_RG:
@@ -1722,7 +1732,7 @@ texture_error_check( struct gl_context *ctx,
           target != GL_TEXTURE_RECTANGLE_ARB &&
           target != GL_PROXY_TEXTURE_RECTANGLE_ARB &&
          !((_mesa_is_cube_face(target) || target == GL_PROXY_TEXTURE_CUBE_MAP) &&
-           (ctx->VersionMajor >= 3 || ctx->Extensions.EXT_gpu_shader4))) {
+           (ctx->Version >= 30 || ctx->Extensions.EXT_gpu_shader4))) {
          if (!isProxy)
             _mesa_error(ctx, GL_INVALID_ENUM,
                         "glTexImage(target/internalFormat)");
@@ -1754,9 +1764,9 @@ texture_error_check( struct gl_context *ctx,
    }
 
    /* additional checks for integer textures */
-   if ((ctx->VersionMajor >= 3 || ctx->Extensions.EXT_texture_integer) &&
-       (_mesa_is_integer_format(format) !=
-        _mesa_is_integer_format(internalFormat))) {
+   if ((ctx->Version >= 30 || ctx->Extensions.EXT_texture_integer) &&
+       (_mesa_is_enum_format_integer(format) !=
+        _mesa_is_enum_format_integer(internalFormat))) {
       if (!isProxy) {
          _mesa_error(ctx, GL_INVALID_OPERATION,
                      "glTexImage%dD(integer/non-integer format mismatch)",
@@ -1927,10 +1937,10 @@ subtexture_error_check2( struct gl_context *ctx, GLuint dimensions,
       }         
    }
 
-   if (ctx->VersionMajor >= 3 || ctx->Extensions.EXT_texture_integer) {
+   if (ctx->Version >= 30 || ctx->Extensions.EXT_texture_integer) {
       /* both source and dest must be integer-valued, or neither */
       if (_mesa_is_format_integer_color(destTex->TexFormat) !=
-          _mesa_is_integer_format(format)) {
+          _mesa_is_enum_format_integer(format)) {
          _mesa_error(ctx, GL_INVALID_OPERATION,
                      "glTexSubImage%dD(integer/non-integer format mismatch)",
                      dimensions);
@@ -1996,7 +2006,7 @@ copytexture_error_check( struct gl_context *ctx, GLuint dimensions,
       }
 
       if (ctx->ReadBuffer->Visual.samples > 0) {
-	 _mesa_error(ctx, GL_INVALID_FRAMEBUFFER_OPERATION,
+	 _mesa_error(ctx, GL_INVALID_OPERATION,
 		     "glCopyTexImage%dD(multisample FBO)",
 		     dimensions);
 	 return GL_TRUE;
@@ -2033,8 +2043,8 @@ copytexture_error_check( struct gl_context *ctx, GLuint dimensions,
    if (_mesa_is_color_format(internalFormat)) {
       struct gl_renderbuffer *rb = ctx->ReadBuffer->_ColorReadBuffer;
 
-      if (_mesa_is_integer_format(rb->InternalFormat) !=
-	  _mesa_is_integer_format(internalFormat)) {
+      if (_mesa_is_enum_format_integer(rb->InternalFormat) !=
+	  _mesa_is_enum_format_integer(internalFormat)) {
 	 _mesa_error(ctx, GL_INVALID_OPERATION,
 		     "glCopyTexImage%dD(integer vs non-integer)", dimensions);
 	 return GL_TRUE;
@@ -2121,7 +2131,7 @@ copytexsubimage_error_check1( struct gl_context *ctx, GLuint dimensions,
       }
 
       if (ctx->ReadBuffer->Visual.samples > 0) {
-	 _mesa_error(ctx, GL_INVALID_FRAMEBUFFER_OPERATION,
+	 _mesa_error(ctx, GL_INVALID_OPERATION,
 		     "glCopyTexSubImage%dD(multisample FBO)",
 		     dimensions);
 	 return GL_TRUE;
@@ -3850,8 +3860,7 @@ validate_texbuffer_format(const struct gl_context *ctx, GLenum internalFormat)
     * any mention of R/RG formats, but they appear in the GL 3.1 core
     * specification.
     */
-   if (ctx->VersionMajor < 3 ||
-       (ctx->VersionMajor == 3 && ctx->VersionMinor == 0)) {
+   if (ctx->Version <= 30) {
       GLenum base_format = _mesa_get_format_base_format(format);
 
       if (base_format == GL_R || base_format == GL_RG)

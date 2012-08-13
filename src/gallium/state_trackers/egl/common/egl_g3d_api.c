@@ -873,6 +873,19 @@ egl_g3d_unbind_wayland_display_wl(_EGLDriver *drv, _EGLDisplay *dpy,
    return gdpy->native->wayland_bufmgr->unbind_display(gdpy->native, wl_dpy);
 }
 
+static EGLBoolean
+egl_g3d_query_wayland_buffer_wl(_EGLDriver *drv, _EGLDisplay *dpy,
+                                struct wl_buffer *buffer,
+                                EGLint attribute, EGLint *value)
+{
+   struct egl_g3d_display *gdpy = egl_g3d_display(dpy);
+
+   if (!gdpy->native->wayland_bufmgr)
+      return EGL_FALSE;
+
+   return gdpy->native->wayland_bufmgr->query_buffer(gdpy->native,
+                                                     buffer, attribute, value);
+}
 #endif /* EGL_WL_bind_wayland_display */
 
 void
@@ -907,7 +920,7 @@ egl_g3d_init_driver_api(_EGLDriver *drv)
 #ifdef EGL_WL_bind_wayland_display
    drv->API.BindWaylandDisplayWL = egl_g3d_bind_wayland_display_wl;
    drv->API.UnbindWaylandDisplayWL = egl_g3d_unbind_wayland_display_wl;
-
+   drv->API.QueryWaylandBufferWL = egl_g3d_query_wayland_buffer_wl;
 #endif
 
    drv->API.CreateSyncKHR = egl_g3d_create_sync;

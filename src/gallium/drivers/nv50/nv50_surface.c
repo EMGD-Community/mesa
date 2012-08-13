@@ -33,6 +33,7 @@
 #include "nv50_resource.h"
 
 #include "nv50_defs.xml.h"
+#include "nv50_texture.xml.h"
 
 #define NV50_ENG2D_SUPPORTED_FORMATS 0xff0843e080608409ULL
 
@@ -598,15 +599,20 @@ nv50_blitctx_make_sampler(struct nv50_blitctx *blit)
 
    blit->sampler[0].id = -1;
 
-   blit->sampler[0].tsc[0] = 0x00000092;
-   blit->sampler[0].tsc[1] = 0x00000051;
+   blit->sampler[0].tsc[0] = NV50_TSC_0_SRGB_CONVERSION_ALLOWED |
+      (NV50_TSC_WRAP_CLAMP_TO_EDGE << NV50_TSC_0_WRAPS__SHIFT) |
+      (NV50_TSC_WRAP_CLAMP_TO_EDGE << NV50_TSC_0_WRAPT__SHIFT) |
+      (NV50_TSC_WRAP_CLAMP_TO_EDGE << NV50_TSC_0_WRAPR__SHIFT);
+   blit->sampler[0].tsc[1] =
+      NV50_TSC_1_MAGF_NEAREST | NV50_TSC_1_MINF_NEAREST | NV50_TSC_1_MIPF_NONE;
 
    /* clamp to edge, min/max lod = 0, bilinear filtering */
 
    blit->sampler[1].id = -1;
 
-   blit->sampler[1].tsc[0] = 0x00000092;
-   blit->sampler[1].tsc[1] = 0x00000062;
+   blit->sampler[1].tsc[0] = blit->sampler[0].tsc[0];
+   blit->sampler[1].tsc[1] =
+      NV50_TSC_1_MAGF_LINEAR | NV50_TSC_1_MINF_LINEAR | NV50_TSC_1_MIPF_NONE;
 }
 
 /* Since shaders cannot export stencil, we cannot copy stencil values when
@@ -637,14 +643,14 @@ nv50_blitctx_get_color_mask_and_fp(struct nv50_blitctx *blit,
    switch (format) {
    case PIPE_FORMAT_Z24X8_UNORM:
    case PIPE_FORMAT_Z24_UNORM_S8_UINT:
-      blit->fp_offset = 160;
+      blit->fp_offset = 0xb0;
       if (mask & PIPE_MASK_Z)
          blit->color_mask |= 0x0111;
       if (mask & PIPE_MASK_S)
          blit->color_mask |= 0x1000;
       break;
    case PIPE_FORMAT_S8_UINT_Z24_UNORM:
-      blit->fp_offset = 24;
+      blit->fp_offset = 0x18;
       if (mask & PIPE_MASK_Z)
          blit->color_mask |= 0x1110;
       if (mask & PIPE_MASK_S)

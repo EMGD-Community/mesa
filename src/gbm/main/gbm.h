@@ -230,11 +230,12 @@ gbm_bo_create(struct gbm_device *gbm,
               uint32_t width, uint32_t height,
               uint32_t format, uint32_t flags);
 
+#define GBM_BO_IMPORT_WL_BUFFER         0x5501
+#define GBM_BO_IMPORT_EGL_IMAGE         0x5502
+
 struct gbm_bo *
-gbm_bo_create_from_egl_image(struct gbm_device *gbm,
-                             void *egl_dpy, void *egl_img,
-                             uint32_t width, uint32_t height,
-                             uint32_t usage);
+gbm_bo_import(struct gbm_device *gbm, uint32_t type,
+              void *buffer, uint32_t usage);
 
 uint32_t
 gbm_bo_get_width(struct gbm_bo *bo);
@@ -243,7 +244,7 @@ uint32_t
 gbm_bo_get_height(struct gbm_bo *bo);
 
 uint32_t
-gbm_bo_get_pitch(struct gbm_bo *bo);
+gbm_bo_get_stride(struct gbm_bo *bo);
 
 uint32_t
 gbm_bo_get_format(struct gbm_bo *bo);

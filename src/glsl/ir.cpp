@@ -46,6 +46,11 @@ bool ir_rvalue::is_negative_one() const
    return false;
 }
 
+bool ir_rvalue::is_basis() const
+{
+   return false;
+}
+
 /**
  * Modify the swizzle make to move one component to another
  *
@@ -273,6 +278,7 @@ ir_expression::ir_expression(int op, ir_rvalue *op0)
    case ir_unop_f2i:
    case ir_unop_b2i:
    case ir_unop_u2i:
+   case ir_unop_bitcast_f2i:
       this->type = glsl_type::get_instance(GLSL_TYPE_INT,
 					   op0->type->vector_elements, 1);
       break;
@@ -280,6 +286,8 @@ ir_expression::ir_expression(int op, ir_rvalue *op0)
    case ir_unop_b2f:
    case ir_unop_i2f:
    case ir_unop_u2f:
+   case ir_unop_bitcast_i2f:
+   case ir_unop_bitcast_u2f:
       this->type = glsl_type::get_instance(GLSL_TYPE_FLOAT,
 					   op0->type->vector_elements, 1);
       break;
@@ -291,6 +299,8 @@ ir_expression::ir_expression(int op, ir_rvalue *op0)
       break;
 
    case ir_unop_i2u:
+   case ir_unop_f2u:
+   case ir_unop_bitcast_f2u:
       this->type = glsl_type::get_instance(GLSL_TYPE_UINT,
 					   op0->type->vector_elements, 1);
       break;
@@ -419,6 +429,7 @@ static const char *const operator_strs[] = {
    "exp2",
    "log2",
    "f2i",
+   "f2u",
    "i2f",
    "f2b",
    "b2f",
@@ -427,6 +438,10 @@ static const char *const operator_strs[] = {
    "u2f",
    "i2u",
    "u2i",
+   "bitcast_i2f",
+   "bitcast_f2i",
+   "bitcast_u2f",
+   "bitcast_f2u",
    "any",
    "trunc",
    "ceil",
@@ -465,6 +480,7 @@ static const char *const operator_strs[] = {
    "min",
    "max",
    "pow",
+   "ubo_load",
    "vector",
 };
 
@@ -1117,6 +1133,49 @@ ir_constant::is_negative_one() const
    return true;
 }
 
+bool
+ir_constant::is_basis() const
+{
+   if (!this->type->is_scalar() && !this->type->is_vector())
+      return false;
+
+   if (this->type->is_boolean())
+      return false;
+
+   unsigned ones = 0;
+   for (unsigned c = 0; c < this->type->vector_elements; c++) {
+      switch (this->type->base_type) {
+      case GLSL_TYPE_FLOAT:
+	 if (this->value.f[c] == 1.0)
+	    ones++;
+	 else if (this->value.f[c] != 0.0)
+	    return false;
+	 break;
+      case GLSL_TYPE_INT:
+	 if (this->value.i[c] == 1)
+	    ones++;
+	 else if (this->value.i[c] != 0)
+	    return false;
+	 break;
+      case GLSL_TYPE_UINT:
+	 if (int(this->value.u[c]) == 1)
+	    ones++;
+	 else if (int(this->value.u[c]) != 0)
+	    return false;
+	 break;
+      default:
+	 /* The only other base types are structures, arrays, samplers, and
+	  * booleans.  Samplers cannot be constants, and the others should
+	  * have been filtered out above.
+	  */
+	 assert(!"Should not get here.");
+	 return false;
+      }
+   }
+
+   return ones == 1;
+}
+
 ir_loop::ir_loop()
 {
    this->ir_type = ir_type_loop;
@@ -1433,6 +1492,7 @@ ir_variable::ir_variable(const struct glsl_type *type, const char *name,
    this->explicit_location = false;
    this->has_initializer = false;
    this->location = -1;
+   this->uniform_block = -1;
    this->warn_extension = NULL;
    this->constant_value = NULL;
    this->constant_initializer = NULL;

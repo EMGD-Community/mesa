@@ -43,6 +43,7 @@
 #include "main/texformat.h"
 #include "main/teximage.h"
 #include "main/texstore.h"
+#include "main/glformats.h"
 #include "program/program.h"
 #include "program/prog_print.h"
 #include "program/prog_instruction.h"
@@ -217,7 +218,7 @@ st_make_drawpix_z_stencil_program(struct st_context *st,
    if (!p)
       return NULL;
 
-   p->NumInstructions = write_depth ? 2 : 1;
+   p->NumInstructions = write_depth ? 3 : 1;
    p->NumInstructions += write_stencil ? 1 : 0;
 
    p->Instructions = _mesa_alloc_instructions(p->NumInstructions);
@@ -237,6 +238,13 @@ st_make_drawpix_z_stencil_program(struct st_context *st,
       p->Instructions[ic].SrcReg[0].Index = FRAG_ATTRIB_TEX0;
       p->Instructions[ic].TexSrcUnit = 0;
       p->Instructions[ic].TexSrcTarget = TEXTURE_2D_INDEX;
+      ic++;
+      /* MOV result.color, fragment.color; */
+      p->Instructions[ic].Opcode = OPCODE_MOV;
+      p->Instructions[ic].DstReg.File = PROGRAM_OUTPUT;
+      p->Instructions[ic].DstReg.Index = FRAG_RESULT_COLOR;
+      p->Instructions[ic].SrcReg[0].File = PROGRAM_INPUT;
+      p->Instructions[ic].SrcReg[0].Index = FRAG_ATTRIB_COL0;
       ic++;
    }
 
@@ -260,8 +268,10 @@ st_make_drawpix_z_stencil_program(struct st_context *st,
 
    p->InputsRead = FRAG_BIT_TEX0 | FRAG_BIT_COL0;
    p->OutputsWritten = 0;
-   if (write_depth)
+   if (write_depth) {
       p->OutputsWritten |= BITFIELD64_BIT(FRAG_RESULT_DEPTH);
+      p->OutputsWritten |= BITFIELD64_BIT(FRAG_RESULT_COLOR);
+   }
    if (write_stencil)
       p->OutputsWritten |= BITFIELD64_BIT(FRAG_RESULT_STENCIL);
 
@@ -359,7 +369,7 @@ internal_format(struct gl_context *ctx, GLenum format, GLenum type)
       return GL_STENCIL_INDEX;
 
    default:
-      if (_mesa_is_integer_format(format)) {
+      if (_mesa_is_enum_format_integer(format)) {
          switch (type) {
          case GL_BYTE:
             return GL_RGBA8I;
@@ -394,6 +404,8 @@ internal_format(struct gl_context *ctx, GLenum format, GLenum type)
 
          case GL_UNSIGNED_SHORT_5_6_5:
          case GL_UNSIGNED_SHORT_5_6_5_REV:
+            return GL_RGB565;
+
          case GL_UNSIGNED_SHORT_5_5_5_1:
          case GL_UNSIGNED_SHORT_1_5_5_5_REV:
             return GL_RGB5_A1;
@@ -667,8 +679,8 @@ draw_textured_quad(struct gl_context *ctx, GLint x, GLint y, GLfloat z,
 
    cso_save_rasterizer(cso);
    cso_save_viewport(cso);
-   cso_save_samplers(cso);
-   cso_save_fragment_sampler_views(cso);
+   cso_save_samplers(cso, PIPE_SHADER_FRAGMENT);
+   cso_save_sampler_views(cso, PIPE_SHADER_FRAGMENT);
    cso_save_fragment_shader(cso);
    cso_save_stream_outputs(cso);
    cso_save_vertex_shader(cso);
@@ -739,11 +751,11 @@ draw_textured_quad(struct gl_context *ctx, GLint x, GLint y, GLfloat z,
       sampler.mag_img_filter = PIPE_TEX_FILTER_NEAREST;
       sampler.normalized_coords = normalized;
 
-      cso_single_sampler(cso, 0, &sampler);
+      cso_single_sampler(cso, PIPE_SHADER_FRAGMENT, 0, &sampler);
       if (num_sampler_view > 1) {
-         cso_single_sampler(cso, 1, &sampler);
+         cso_single_sampler(cso, PIPE_SHADER_FRAGMENT, 1, &sampler);
       }
-      cso_single_sampler_done(cso);
+      cso_single_sampler_done(cso, PIPE_SHADER_FRAGMENT);
    }
 
    /* viewport state: viewport matching window dims */
@@ -766,7 +778,7 @@ draw_textured_quad(struct gl_context *ctx, GLint x, GLint y, GLfloat z,
    cso_set_stream_outputs(st->cso_context, 0, NULL, 0);
 
    /* texture state: */
-   cso_set_fragment_sampler_views(cso, num_sampler_view, sv);
+   cso_set_sampler_views(cso, PIPE_SHADER_FRAGMENT, num_sampler_view, sv);
 
    /* Compute Gallium window coords (y=0=top) with pixel zoom.
     * Recall that these coords are transformed by the current
@@ -792,8 +804,8 @@ draw_textured_quad(struct gl_context *ctx, GLint x, GLint y, GLfloat z,
    /* restore state */
    cso_restore_rasterizer(cso);
    cso_restore_viewport(cso);
-   cso_restore_samplers(cso);
-   cso_restore_fragment_sampler_views(cso);
+   cso_restore_samplers(cso, PIPE_SHADER_FRAGMENT);
+   cso_restore_sampler_views(cso, PIPE_SHADER_FRAGMENT);
    cso_restore_fragment_shader(cso);
    cso_restore_vertex_shader(cso);
    cso_restore_geometry_shader(cso);
@@ -1047,6 +1059,28 @@ get_depth_stencil_fp_variant(struct st_context *st, GLboolean write_depth,
 
 
 /**
+ * Clamp glDrawPixels width and height to the maximum texture size.
+ */
+static void
+clamp_size(struct pipe_context *pipe, GLsizei *width, GLsizei *height,
+           struct gl_pixelstore_attrib *unpack)
+{
+   const unsigned maxSize = 
+      1 << (pipe->screen->get_param(pipe->screen,
+                                    PIPE_CAP_MAX_TEXTURE_2D_LEVELS) - 1);
+
+   if (*width > maxSize) {
+      if (unpack->RowLength == 0)
+         unpack->RowLength = *width;
+      *width = maxSize;
+   }
+   if (*height > maxSize) {
+      *height = maxSize;
+   }
+}
+
+
+/**
  * Called via ctx->Driver.DrawPixels()
  */
 static void
@@ -1063,6 +1097,20 @@ st_DrawPixels(struct gl_context *ctx, GLint x, GLint y,
    struct pipe_sampler_view *sv[2];
    int num_sampler_view = 1;
    struct st_fp_variant *fpv;
+   struct gl_pixelstore_attrib clippedUnpack;
+
+   /* Mesa state should be up to date by now */
+   assert(ctx->NewState == 0x0);
+
+   st_validate_state(st);
+
+   /* Limit the size of the glDrawPixels to the max texture size.
+    * Strictly speaking, that's not correct but since we don't handle
+    * larger images yet, this is better than crashing.
+    */
+   clippedUnpack = *unpack;
+   unpack = &clippedUnpack;
+   clamp_size(st->pipe, &width, &height, &clippedUnpack);
 
    if (format == GL_DEPTH_STENCIL)
       write_stencil = write_depth = GL_TRUE;
@@ -1078,11 +1126,6 @@ st_DrawPixels(struct gl_context *ctx, GLint x, GLint y,
                           unpack, pixels);
       return;
    }
-
-   /* Mesa state should be up to date by now */
-   assert(ctx->NewState == 0x0);
-
-   st_validate_state(st);
 
    /*
     * Get vertex/fragment shaders
@@ -1125,27 +1168,8 @@ st_DrawPixels(struct gl_context *ctx, GLint x, GLint y,
              * The stencil is written using the shader stencil export
              * functionality. */
             if (write_stencil) {
-               enum pipe_format stencil_format = PIPE_FORMAT_NONE;
-
-               switch (pt->format) {
-               case PIPE_FORMAT_Z24_UNORM_S8_UINT:
-               case PIPE_FORMAT_X24S8_UINT:
-                  stencil_format = PIPE_FORMAT_X24S8_UINT;
-                  break;
-               case PIPE_FORMAT_S8_UINT_Z24_UNORM:
-               case PIPE_FORMAT_S8X24_UINT:
-                  stencil_format = PIPE_FORMAT_S8X24_UINT;
-                  break;
-               case PIPE_FORMAT_Z32_FLOAT_S8X24_UINT:
-               case PIPE_FORMAT_X32_S8X24_UINT:
-                  stencil_format = PIPE_FORMAT_X32_S8X24_UINT;
-                  break;
-               case PIPE_FORMAT_S8_UINT:
-                  stencil_format = PIPE_FORMAT_S8_UINT;
-                  break;
-               default:
-                  assert(0);
-               }
+               enum pipe_format stencil_format =
+                     util_format_stencil_only(pt->format);
 
                sv[1] = st_create_texture_sampler_view_format(st->pipe, pt,
                                                              stencil_format);

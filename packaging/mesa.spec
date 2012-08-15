@@ -2,7 +2,7 @@
 
 Name:       mesa
 Summary:    Mesa graphics libraries
-Version:    8.1.0+1+5f3f6
+Version:    8.1.0.1.g6cb9e9
 Release:    1 
 Group:      System/Libraries
 License:    MIT

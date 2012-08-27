@@ -239,7 +239,7 @@ Mesa OpenGL library Utility development package
     --disable-gallium-egl \
     --enable-gles1 \
     --enable-gles2 \
-    --with-egl-platforms=wayland,drm \
+    --with-egl-platforms=wayland,drm,x11 \
     --enable-gbm \
     --enable-gallium-gbm \
     --enable-shared-glapi \

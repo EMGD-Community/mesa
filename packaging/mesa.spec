@@ -257,12 +257,14 @@ rm -rf %{buildroot}
 
 %postun libGL -p /sbin/ldconfig
 
-%post libgbm -p /sbin/ldconfig
-rm -rf /usr/lib/libdricore.so
-ln -sf /usr/lib/libdricore%{mesa_libversion}.so /usr/lib/libdricore.so
+%post libgbm
+/sbin/ldconfig
+rm -rf %{_libdir}/libdricore.so
+ln -sf %{_libdir}/libdricore%{mesa_libversion}.so %{_libdir}/libdricore.so
 
-%postun libgbm -p /sbin/ldconfig
-rm -rf /usr/lib/libdricore.so
+%postun libgbm
+/sbin/ldconfig
+rm -rf %{_libdir}/libdricore.so
 
 %post libGLESv2 -p /sbin/ldconfig
 
@@ -295,9 +297,9 @@ rm -rf /usr/lib/libdricore.so
 %files dri-drivers-devel
 %defattr(-,root,root,-)
 %{_libdir}/pkgconfig/dri.pc
-/usr/lib/dri/r300_dri.so
-/usr/lib/dri/r600_dri.so
-/usr/lib/dri/vmwgfx_dri.so
+%{_libdir}/dri/r300_dri.so
+%{_libdir}/dri/r600_dri.so
+%{_libdir}/dri/vmwgfx_dri.so
 
 %files dri-i965-driver
 %defattr(-,root,root,-)
@@ -334,7 +336,7 @@ rm -rf /usr/lib/libdricore.so
 %defattr(-,root,root,-)
 %{_libdir}/libgbm.so.*
 %{_libdir}/gbm/*
-/etc/drirc
+%{_sysconfdir}/drirc
 %{_libdir}/libdricore%{mesa_libversion}.so*
 
 %files libgbm-devel

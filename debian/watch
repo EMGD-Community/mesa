@@ -1,0 +1,3 @@
+version=3
+opts="uversionmangle=s/-rc/~rc/" \
+ftp://freedesktop.org/pub/mesa/([\d\.]*)/ MesaLib-(.*)\.tar\.gz

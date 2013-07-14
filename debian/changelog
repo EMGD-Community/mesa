@@ -1,3 +1,9 @@
+mesa-7.9 (7.9+repack-1ubuntu6) saucy; urgency=low
+
+  * Renamed packages
+
+ -- Thomas-Karl Pietrowski <thopiekar@googlemail.com>  Sat, 13 Jul 2013 23:33:13 +0200
+
 mesa (7.9+repack-1ubuntu6) natty; urgency=low
 
   * No-change rebuild

@@ -272,7 +272,6 @@ static void brw_vs_alloc_regs( struct brw_vs_compile *c )
 	 else if (i == VERT_RESULT_PSIZ) {
 	    c->regs[PROGRAM_OUTPUT][i] = brw_vec8_grf(reg, 0);
 	    reg++;
-	    mrf++;		/* just a placeholder?  XXX fix later stages & remove this */
 	 }
 	 else {
 	    /* Two restrictions on our compute-to-MRF here.  The
@@ -1225,11 +1224,10 @@ static struct brw_reg get_arg( struct brw_vs_compile *c,
 					  GET_SWZ(src->Swizzle, 1),
 					  GET_SWZ(src->Swizzle, 2),
 					  GET_SWZ(src->Swizzle, 3));
-   }
 
-   /* Note this is ok for non-swizzle instructions: 
-    */
-   reg.negate = src->Negate ? 1 : 0;   
+      /* Note this is ok for non-swizzle ARB_vp instructions */
+      reg.negate = src->Negate ? 1 : 0;
+   }
 
    return reg;
 }
@@ -1488,6 +1486,8 @@ static void emit_vertex_write( struct brw_vs_compile *c)
 	 break;
       if (!(c->prog_data.outputs_written & BITFIELD64_BIT(i)))
 	 continue;
+      if (i == VERT_RESULT_PSIZ)
+	 continue;
 
       if (i >= VERT_RESULT_TEX0 &&
 	  c->regs[PROGRAM_OUTPUT][i].file == BRW_GENERAL_REGISTER_FILE) {
@@ -1719,6 +1719,7 @@ void brw_vs_emit(struct brw_vs_compile *c )
 
       switch (inst->Opcode) {
       case OPCODE_ABS:
+	 args[0].negate = GL_FALSE;
 	 brw_MOV(p, dst, brw_abs(args[0]));
 	 break;
       case OPCODE_ADD:

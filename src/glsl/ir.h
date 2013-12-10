@@ -26,13 +26,10 @@
 #ifndef IR_H
 #define IR_H
 
-#include <cstdio>
-#include <cstdlib>
+#include <stdio.h>
+#include <stdlib.h>
 
-extern "C" {
-#include <talloc.h>
-}
-
+#include "ralloc.h"
 #include "list.h"
 #include "ir_visitor.h"
 #include "ir_hierarchical_visitor.h"
@@ -125,6 +122,7 @@ public:
    virtual class ir_if *                as_if()               { return NULL; }
    virtual class ir_swizzle *           as_swizzle()          { return NULL; }
    virtual class ir_constant *          as_constant()         { return NULL; }
+   virtual class ir_discard *           as_discard()          { return NULL; }
    /*@}*/
 
 protected:
@@ -257,6 +255,15 @@ public:
    unsigned read_only:1;
    unsigned centroid:1;
    unsigned invariant:1;
+
+   /**
+    * Has this variable been used for reading or writing?
+    *
+    * Several GLSL semantic checks require knowledge of whether or not a
+    * variable has been used.  For example, it is an error to redeclare a
+    * variable as invariant after it has been used.
+    */
+   unsigned used:1;
 
    /**
     * Storage class of the variable.
@@ -711,6 +718,11 @@ enum ir_expression_operation {
 
    ir_unop_noise,
 
+   /**
+    * A sentinel marking the last of the unary operations.
+    */
+   ir_last_unop = ir_unop_noise,
+
    ir_binop_add,
    ir_binop_sub,
    ir_binop_mul,
@@ -769,13 +781,33 @@ enum ir_expression_operation {
    ir_binop_min,
    ir_binop_max,
 
-   ir_binop_pow
+   ir_binop_pow,
+
+   /**
+    * A sentinel marking the last of the binary operations.
+    */
+   ir_last_binop = ir_binop_pow,
+
+   /**
+    * A sentinel marking the last of all operations.
+    */
+   ir_last_opcode = ir_last_binop
 };
 
 class ir_expression : public ir_rvalue {
 public:
+   /**
+    * Constructor for unary operation expressions
+    */
+   ir_expression(int op, const struct glsl_type *type, ir_rvalue *);
+   ir_expression(int op, ir_rvalue *);
+
+   /**
+    * Constructor for binary operation expressions
+    */
    ir_expression(int op, const struct glsl_type *type,
 		 ir_rvalue *, ir_rvalue *);
+   ir_expression(int op, ir_rvalue *op0, ir_rvalue *op1);
 
    virtual ir_expression *as_expression()
    {
@@ -866,7 +898,7 @@ public:
    /**
     * Get a generic ir_call object when an error occurs
     *
-    * Any allocation will be performed with 'ctx' as talloc owner.
+    * Any allocation will be performed with 'ctx' as ralloc owner.
     */
    static ir_call *get_error_instruction(void *ctx);
 
@@ -1043,6 +1075,11 @@ public:
    }
 
    virtual ir_visitor_status accept(ir_hierarchical_visitor *);
+
+   virtual ir_discard *as_discard()
+   {
+      return this;
+   }
 
    ir_rvalue *condition;
 };

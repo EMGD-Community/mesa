@@ -44,6 +44,7 @@ static const struct {
    const char *name;
    int flag_offset;
 } default_extensions[] = {
+   { OFF, "GL_ARB_ES2_compatibility",          F(ARB_ES2_compatibility) },
    { OFF, "GL_ARB_blend_func_extended",        F(ARB_blend_func_extended) },
    { OFF, "GL_ARB_copy_buffer",                F(ARB_copy_buffer) },
    { OFF, "GL_ARB_depth_buffer_float",         F(ARB_depth_buffer_float) },
@@ -250,7 +251,8 @@ _mesa_enable_sw_extensions(GLcontext *ctx)
 #if FEATURE_ARB_framebuffer_object
    ctx->Extensions.ARB_framebuffer_object = GL_TRUE;
 #endif
-#if FEATURE_ARB_geometry_shader4
+#if FEATURE_ARB_geometry_shader4 && 0
+   /* XXX re-enable when GLSL compiler again supports geometry shaders */
    ctx->Extensions.ARB_geometry_shader4 = GL_TRUE;
 #endif
    ctx->Extensions.ARB_half_float_pixel = GL_TRUE;
@@ -866,15 +868,10 @@ make_extension_string_es2(const GLcontext *ctx, GLubyte *str)
 {
    size_t len = 0;
 
-   len += append_extension(&str, "GL_OES_compressed_paletted_texture");
-
    if (ctx->Extensions.ARB_framebuffer_object) {
       len += append_extension(&str, "GL_OES_depth24");
-      len += append_extension(&str, "GL_OES_depth32");
       len += append_extension(&str, "GL_OES_fbo_render_mipmap");
       len += append_extension(&str, "GL_OES_rgb8_rgba8");
-      len += append_extension(&str, "GL_OES_stencil1");
-      len += append_extension(&str, "GL_OES_stencil4");
    }
 
    if (ctx->Extensions.EXT_vertex_array)
@@ -882,8 +879,12 @@ make_extension_string_es2(const GLcontext *ctx, GLubyte *str)
    if (ctx->Extensions.ARB_vertex_buffer_object)
       len += append_extension(&str, "GL_OES_mapbuffer");
 
+#if 0
+   /* disabled because of missing GLSL support */
    if (ctx->Extensions.EXT_texture3D)
       len += append_extension(&str, "GL_OES_texture_3D");
+#endif
+
    if (ctx->Extensions.ARB_texture_non_power_of_two)
       len += append_extension(&str, "GL_OES_texture_npot");
    if (ctx->Extensions.EXT_texture_filter_anisotropic)

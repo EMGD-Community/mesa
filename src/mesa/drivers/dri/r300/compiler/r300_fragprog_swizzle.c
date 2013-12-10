@@ -94,8 +94,9 @@ static const struct swizzle_data* lookup_native_swizzle(unsigned int swizzle)
  */
 static int r300_swizzle_is_native(rc_opcode opcode, struct rc_src_register reg)
 {
-	if (reg.Abs)
-		reg.Negate = RC_MASK_NONE;
+	const struct swizzle_data* sd;
+	unsigned int relevant;
+	int j;
 
 	if (opcode == RC_OPCODE_KIL ||
 	    opcode == RC_OPCODE_TEX ||
@@ -117,8 +118,7 @@ static int r300_swizzle_is_native(rc_opcode opcode, struct rc_src_register reg)
 		return 1;
 	}
 
-	unsigned int relevant = 0;
-	int j;
+	relevant = 0;
 
 	for(j = 0; j < 3; ++j)
 		if (GET_SWZ(reg.Swizzle, j) != RC_SWIZZLE_UNUSED)
@@ -127,7 +127,8 @@ static int r300_swizzle_is_native(rc_opcode opcode, struct rc_src_register reg)
 	if ((reg.Negate & relevant) && ((reg.Negate & relevant) != relevant))
 		return 0;
 
-	if (!lookup_native_swizzle(reg.Swizzle))
+	sd = lookup_native_swizzle(reg.Swizzle);
+	if (!sd || (reg.File == RC_FILE_PRESUB && sd->srcp_stride == 0))
 		return 0;
 
 	return 1;
@@ -138,9 +139,6 @@ static void r300_swizzle_split(
 		struct rc_src_register src, unsigned int mask,
 		struct rc_swizzle_split * split)
 {
-	if (src.Abs)
-		src.Negate = RC_MASK_NONE;
-
 	split->NumPhases = 0;
 
 	while(mask) {
@@ -200,7 +198,7 @@ unsigned int r300FPTranslateRGBSwizzle(unsigned int src, unsigned int swizzle)
 {
 	const struct swizzle_data* sd = lookup_native_swizzle(swizzle);
 
-	if (!sd) {
+	if (!sd || (src == RC_PAIR_PRESUB_SRC && sd->srcp_stride == 0)) {
 		fprintf(stderr, "Not a native swizzle: %08x\n", swizzle);
 		return 0;
 	}

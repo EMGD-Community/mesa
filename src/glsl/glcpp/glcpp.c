@@ -27,10 +27,19 @@
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
+#include <stdio.h>
 #include "glcpp.h"
 #include "main/mtypes.h"
+#include "main/shaderobj.h"
 
 extern int yydebug;
+
+void
+_mesa_reference_shader(GLcontext *ctx, struct gl_shader **ptr,
+                       struct gl_shader *sh)
+{
+   *ptr = sh;
+}
 
 /* Read from fd until EOF and return a string of everything read.
  */
@@ -46,7 +55,7 @@ load_text_fd (void *ctx, int fd)
 	while (1) {
 		if (total_read + CHUNK + 1 > text_size) {
 			text_size = text_size ? text_size * 2 : CHUNK + 1;
-			text = talloc_realloc_size (ctx, text, text_size);
+			text = reralloc_size (ctx, text, text_size);
 			if (text == NULL) {
 				fprintf (stderr, "Out of memory\n");
 				return NULL;
@@ -56,7 +65,7 @@ load_text_fd (void *ctx, int fd)
 		if (bytes < 0) {
 			fprintf (stderr, "Error while reading: %s\n",
 				 strerror (errno));
-			talloc_free (text);
+			ralloc_free (text);
 			return NULL;
 		}
 
@@ -99,8 +108,8 @@ int
 main (int argc, char *argv[])
 {
 	char *filename = NULL;
-	void *ctx = talloc(NULL, void*);
-	char *info_log = talloc_strdup(ctx, "");
+	void *ctx = ralloc(NULL, void*);
+	char *info_log = ralloc_strdup(ctx, "");
 	const char *shader;
 	int ret;
 
@@ -117,7 +126,7 @@ main (int argc, char *argv[])
 	printf("%s", shader);
 	fprintf(stderr, "%s", info_log);
 
-	talloc_free(ctx);
+	ralloc_free(ctx);
 
 	return ret;
 }

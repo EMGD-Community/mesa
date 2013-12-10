@@ -177,10 +177,15 @@ intel_alloc_renderbuffer_storage(GLcontext * ctx, struct gl_renderbuffer *rb,
    DBG("Allocating %d x %d Intel RBO\n", width, height);
 
    tiling = I915_TILING_NONE;
+   if (intel->use_texture_tiling) {
+      GLenum base_format = _mesa_get_format_base_format(rb->Format);
 
-   /* Gen6 requires depth must be tiling */
-   if (intel->gen >= 6 && rb->Format == MESA_FORMAT_S8_Z24)
-       tiling = I915_TILING_Y;
+      if (intel->gen >= 4 && (base_format == GL_DEPTH_COMPONENT ||
+			      base_format == GL_DEPTH_STENCIL))
+	 tiling = I915_TILING_Y;
+      else
+	 tiling = I915_TILING_X;
+   }
 
    irb->region = intel_region_alloc(intel->intelScreen, tiling, cpp,
 				    width, height, GL_TRUE);
@@ -439,6 +444,12 @@ intel_update_wrapper(GLcontext *ctx, struct intel_renderbuffer *irb,
       irb->Base.DataType = GL_UNSIGNED_BYTE;
       DBG("Render to XGBA8 texture OK\n");
    }
+#ifndef I915
+   else if (texImage->TexFormat == MESA_FORMAT_SARGB8) {
+      irb->Base.DataType = GL_UNSIGNED_BYTE;
+      DBG("Render to SARGB8 texture OK\n");
+   }
+#endif
    else if (texImage->TexFormat == MESA_FORMAT_RGB565) {
       irb->Base.DataType = GL_UNSIGNED_BYTE;
       DBG("Render to RGB5 texture OK\n");
@@ -451,10 +462,12 @@ intel_update_wrapper(GLcontext *ctx, struct intel_renderbuffer *irb,
       irb->Base.DataType = GL_UNSIGNED_BYTE;
       DBG("Render to ARGB4444 texture OK\n");
    }
+#ifndef I915
    else if (texImage->TexFormat == MESA_FORMAT_A8) {
       irb->Base.DataType = GL_UNSIGNED_BYTE;
       DBG("Render to A8 texture OK\n");
    }
+#endif
    else if (texImage->TexFormat == MESA_FORMAT_Z16) {
       irb->Base.DataType = GL_UNSIGNED_SHORT;
       DBG("Render to DEPTH16 texture OK\n");
@@ -606,7 +619,8 @@ intel_finish_render_texture(GLcontext * ctx,
    struct intel_texture_image *intel_image = intel_texture_image(image);
 
    /* Flag that this image may now be validated into the object's miptree. */
-   intel_image->used_as_render_target = GL_FALSE;
+   if (intel_image)
+      intel_image->used_as_render_target = GL_FALSE;
 
    /* Since we've (probably) rendered to the texture and will (likely) use
     * it in the texture domain later on in this batchbuffer, flush the
@@ -664,7 +678,10 @@ intel_validate_framebuffer(GLcontext *ctx, struct gl_framebuffer *fb)
       case MESA_FORMAT_RGB565:
       case MESA_FORMAT_ARGB1555:
       case MESA_FORMAT_ARGB4444:
+#ifndef I915
+      case MESA_FORMAT_SARGB8:
       case MESA_FORMAT_A8:
+#endif
 	 break;
       default:
 	 fb->_Status = GL_FRAMEBUFFER_UNSUPPORTED_EXT;

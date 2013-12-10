@@ -200,6 +200,9 @@ static void use_temporary(struct r500_fragment_program_code* code, unsigned int 
 
 static unsigned int use_source(struct r500_fragment_program_code* code, struct radeon_pair_instruction_source src)
 {
+	if (!src.Used)
+		return 0;
+
 	if (src.File == RC_FILE_CONSTANT) {
 		return src.Index | 0x100;
 	} else if (src.File == RC_FILE_TEMPORARY) {
@@ -370,7 +373,7 @@ static int emit_tex(struct r300_fragment_program_compiler *c, struct rc_sub_inst
 		| (inst->DstReg.WriteMask << 11)
 		| R500_INST_TEX_SEM_WAIT;
 	code->inst[ip].inst1 = R500_TEX_ID(inst->TexSrcUnit)
-		| R500_TEX_SEM_ACQUIRE | R500_TEX_IGNORE_UNCOVERED;
+		| R500_TEX_SEM_ACQUIRE;
 
 	if (inst->TexSrcTarget == RC_TEXTURE_RECT)
 		code->inst[ip].inst1 |= R500_TEX_UNSCALED;

@@ -180,7 +180,7 @@ ultrix-gcc:
 
 # Rules for making release tarballs
 
-VERSION=7.9
+VERSION=7.9.2
 DIRECTORY = Mesa-$(VERSION)
 LIB_NAME = MesaLib-$(VERSION)
 GLUT_NAME = MesaGLUT-$(VERSION)
@@ -344,26 +344,34 @@ GALLIUM_FILES = \
 	$(DIRECTORY)/src/gallium/*/*/*/*.[ch]				\
 	$(DIRECTORY)/src/gallium/*/*/*/*.py
 
+APPLE_DRI_FILES = \
+	$(DIRECTORY)/src/glx/apple/Makefile 				\
+	$(DIRECTORY)/src/glx/apple/*.[ch]				\
+	$(DIRECTORY)/src/glx/apple/*.tcl				\
+	$(DIRECTORY)/src/glx/apple/apple_exports.list			\
+	$(DIRECTORY)/src/glx/apple/GL_aliases				\
+	$(DIRECTORY)/src/glx/apple/GL_extensions			\
+	$(DIRECTORY)/src/glx/apple/GL_noop				\
+	$(DIRECTORY)/src/glx/apple/GL_promoted				\
+	$(DIRECTORY)/src/glx/apple/specs/*.spec				\
+	$(DIRECTORY)/src/glx/apple/specs/*.tm
 
 DRI_FILES = \
 	$(DIRECTORY)/include/GL/internal/dri_interface.h		\
-	$(DIRECTORY)/include/GL/internal/glcore.h			\
 	$(DIRECTORY)/include/GL/internal/sarea.h			\
 	$(DIRECTORY)/src/glx/Makefile					\
-	$(DIRECTORY)/src/glx/Makefile					\
 	$(DIRECTORY)/src/glx/*.[ch]					\
+	$(APPLE_DRI_FILES)						\
 	$(DIRECTORY)/src/mesa/drivers/dri/Makefile			\
 	$(DIRECTORY)/src/mesa/drivers/dri/Makefile.template		\
 	$(DIRECTORY)/src/mesa/drivers/dri/dri.pc.in			\
-	$(DIRECTORY)/src/mesa/drivers/dri/common/xmlpool/*.[ch]		\
 	$(DIRECTORY)/src/mesa/drivers/dri/common/xmlpool/*.po		\
 	$(DIRECTORY)/src/mesa/drivers/dri/*/*.[chS]			\
 	$(DIRECTORY)/src/mesa/drivers/dri/*/*.cpp			\
 	$(DIRECTORY)/src/mesa/drivers/dri/*/*/*.[chS]			\
 	$(DIRECTORY)/src/mesa/drivers/dri/*/Makefile			\
 	$(DIRECTORY)/src/mesa/drivers/dri/*/*/Makefile			\
-	$(DIRECTORY)/src/mesa/drivers/dri/*/Doxyfile			\
-	$(DIRECTORY)/src/mesa/drivers/dri/*/server/*.[ch]
+	$(DIRECTORY)/src/mesa/drivers/dri/*/Doxyfile
 
 SGI_GLU_FILES = \
 	$(DIRECTORY)/src/glu/Makefile					\

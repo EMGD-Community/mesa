@@ -62,10 +62,6 @@ int INTEL_DEBUG = (0);
 #endif
 
 
-#define DRIVER_DATE                     "20100330 DEVELOPMENT"
-#define DRIVER_DATE_GEM                 "GEM " DRIVER_DATE
-
-
 static const GLubyte *
 intelGetString(GLcontext * ctx, GLenum name)
 {
@@ -155,6 +151,7 @@ intelGetString(GLcontext * ctx, GLenum name)
          chipset = "Intel(R) G41";
          break;
       case PCI_CHIP_B43_G:
+      case PCI_CHIP_B43_G1:
          chipset = "Intel(R) B43";
          break;
       case PCI_CHIP_ILD_G:
@@ -181,7 +178,7 @@ intelGetString(GLcontext * ctx, GLenum name)
          break;
       }
 
-      (void) driGetRendererString(buffer, chipset, DRIVER_DATE_GEM, 0);
+      (void) driGetRendererString(buffer, chipset, "", 0);
       return (GLubyte *) buffer;
 
    default:

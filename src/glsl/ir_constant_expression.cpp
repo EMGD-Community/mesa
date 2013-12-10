@@ -54,6 +54,9 @@ dot(ir_constant *op0, ir_constant *op1)
 ir_constant *
 ir_expression::constant_expression_value()
 {
+   if (this->type->is_error())
+      return NULL;
+
    ir_constant *op[2] = { NULL, NULL };
    ir_constant_data data;
 
@@ -83,7 +86,7 @@ ir_expression::constant_expression_value()
       components = op[1]->type->components();
    }
 
-   void *ctx = talloc_parent(this);
+   void *ctx = ralloc_parent(this);
 
    /* Handle array operations here, rather than below. */
    if (op[0]->type->is_array()) {
@@ -505,10 +508,18 @@ ir_expression::constant_expression_value()
 
 	 switch (op[0]->type->base_type) {
 	 case GLSL_TYPE_UINT:
-	    data.u[c] = op[0]->value.u[c0] / op[1]->value.u[c1];
+	    if (op[1]->value.u[c1] == 0) {
+	       data.u[c] = 0;
+	    } else {
+	       data.u[c] = op[0]->value.u[c0] / op[1]->value.u[c1];
+	    }
 	    break;
 	 case GLSL_TYPE_INT:
-	    data.i[c] = op[0]->value.i[c0] / op[1]->value.i[c1];
+	    if (op[1]->value.i[c1] == 0) {
+	       data.i[c] = 0;
+	    } else {
+	       data.i[c] = op[0]->value.i[c0] / op[1]->value.i[c1];
+	    }
 	    break;
 	 case GLSL_TYPE_FLOAT:
 	    data.f[c] = op[0]->value.f[c0] / op[1]->value.f[c1];
@@ -527,10 +538,18 @@ ir_expression::constant_expression_value()
 
 	 switch (op[0]->type->base_type) {
 	 case GLSL_TYPE_UINT:
-	    data.u[c] = op[0]->value.u[c0] % op[1]->value.u[c1];
+	    if (op[1]->value.u[c1] == 0) {
+	       data.u[c] = 0;
+	    } else {
+	       data.u[c] = op[0]->value.u[c0] % op[1]->value.u[c1];
+	    }
 	    break;
 	 case GLSL_TYPE_INT:
-	    data.i[c] = op[0]->value.i[c0] % op[1]->value.i[c1];
+	    if (op[1]->value.i[c1] == 0) {
+	       data.i[c] = 0;
+	    } else {
+	       data.i[c] = op[0]->value.i[c0] % op[1]->value.i[c1];
+	    }
 	    break;
 	 case GLSL_TYPE_FLOAT:
 	    /* We don't use fmod because it rounds toward zero; GLSL specifies
@@ -563,63 +582,75 @@ ir_expression::constant_expression_value()
       break;
 
    case ir_binop_less:
-      switch (op[0]->type->base_type) {
-      case GLSL_TYPE_UINT:
-	 data.b[0] = op[0]->value.u[0] < op[1]->value.u[0];
-	 break;
-      case GLSL_TYPE_INT:
-	 data.b[0] = op[0]->value.i[0] < op[1]->value.i[0];
-	 break;
-      case GLSL_TYPE_FLOAT:
-	 data.b[0] = op[0]->value.f[0] < op[1]->value.f[0];
-	 break;
-      default:
-	 assert(0);
+      assert(op[0]->type == op[1]->type);
+      for (unsigned c = 0; c < op[0]->type->components(); c++) {
+	 switch (op[0]->type->base_type) {
+	 case GLSL_TYPE_UINT:
+	    data.b[0] = op[0]->value.u[0] < op[1]->value.u[0];
+	    break;
+	 case GLSL_TYPE_INT:
+	    data.b[0] = op[0]->value.i[0] < op[1]->value.i[0];
+	    break;
+	 case GLSL_TYPE_FLOAT:
+	    data.b[0] = op[0]->value.f[0] < op[1]->value.f[0];
+	    break;
+	 default:
+	    assert(0);
+	 }
       }
       break;
    case ir_binop_greater:
-      switch (op[0]->type->base_type) {
-      case GLSL_TYPE_UINT:
-	 data.b[0] = op[0]->value.u[0] > op[1]->value.u[0];
-	 break;
-      case GLSL_TYPE_INT:
-	 data.b[0] = op[0]->value.i[0] > op[1]->value.i[0];
-	 break;
-      case GLSL_TYPE_FLOAT:
-	 data.b[0] = op[0]->value.f[0] > op[1]->value.f[0];
-	 break;
-      default:
-	 assert(0);
+      assert(op[0]->type == op[1]->type);
+      for (unsigned c = 0; c < op[0]->type->components(); c++) {
+	 switch (op[0]->type->base_type) {
+	 case GLSL_TYPE_UINT:
+	    data.b[c] = op[0]->value.u[c] > op[1]->value.u[c];
+	    break;
+	 case GLSL_TYPE_INT:
+	    data.b[c] = op[0]->value.i[c] > op[1]->value.i[c];
+	    break;
+	 case GLSL_TYPE_FLOAT:
+	    data.b[c] = op[0]->value.f[c] > op[1]->value.f[c];
+	    break;
+	 default:
+	    assert(0);
+	 }
       }
       break;
    case ir_binop_lequal:
-      switch (op[0]->type->base_type) {
-      case GLSL_TYPE_UINT:
-	 data.b[0] = op[0]->value.u[0] <= op[1]->value.u[0];
-	 break;
-      case GLSL_TYPE_INT:
-	 data.b[0] = op[0]->value.i[0] <= op[1]->value.i[0];
-	 break;
-      case GLSL_TYPE_FLOAT:
-	 data.b[0] = op[0]->value.f[0] <= op[1]->value.f[0];
-	 break;
-      default:
-	 assert(0);
+      assert(op[0]->type == op[1]->type);
+      for (unsigned c = 0; c < op[0]->type->components(); c++) {
+	 switch (op[0]->type->base_type) {
+	 case GLSL_TYPE_UINT:
+	    data.b[0] = op[0]->value.u[0] <= op[1]->value.u[0];
+	    break;
+	 case GLSL_TYPE_INT:
+	    data.b[0] = op[0]->value.i[0] <= op[1]->value.i[0];
+	    break;
+	 case GLSL_TYPE_FLOAT:
+	    data.b[0] = op[0]->value.f[0] <= op[1]->value.f[0];
+	    break;
+	 default:
+	    assert(0);
+	 }
       }
       break;
    case ir_binop_gequal:
-      switch (op[0]->type->base_type) {
-      case GLSL_TYPE_UINT:
-	 data.b[0] = op[0]->value.u[0] >= op[1]->value.u[0];
-	 break;
-      case GLSL_TYPE_INT:
-	 data.b[0] = op[0]->value.i[0] >= op[1]->value.i[0];
-	 break;
-      case GLSL_TYPE_FLOAT:
-	 data.b[0] = op[0]->value.f[0] >= op[1]->value.f[0];
-	 break;
-      default:
-	 assert(0);
+      assert(op[0]->type == op[1]->type);
+      for (unsigned c = 0; c < op[0]->type->components(); c++) {
+	 switch (op[0]->type->base_type) {
+	 case GLSL_TYPE_UINT:
+	    data.b[0] = op[0]->value.u[0] >= op[1]->value.u[0];
+	    break;
+	 case GLSL_TYPE_INT:
+	    data.b[0] = op[0]->value.i[0] >= op[1]->value.i[0];
+	    break;
+	 case GLSL_TYPE_FLOAT:
+	    data.b[0] = op[0]->value.f[0] >= op[1]->value.f[0];
+	    break;
+	 default:
+	    assert(0);
+	 }
       }
       break;
    case ir_binop_equal:
@@ -704,7 +735,7 @@ ir_swizzle::constant_expression_value()
 	 }
       }
 
-      void *ctx = talloc_parent(this);
+      void *ctx = ralloc_parent(this);
       return new(ctx) ir_constant(this->type, &data);
    }
    return NULL;
@@ -727,7 +758,7 @@ ir_dereference_variable::constant_expression_value()
    if (!var->constant_value)
       return NULL;
 
-   return var->constant_value->clone(talloc_parent(var), NULL);
+   return var->constant_value->clone(ralloc_parent(var), NULL);
 }
 
 
@@ -738,7 +769,7 @@ ir_dereference_array::constant_expression_value()
    ir_constant *idx = this->array_index->constant_expression_value();
 
    if ((array != NULL) && (idx != NULL)) {
-      void *ctx = talloc_parent(this);
+      void *ctx = ralloc_parent(this);
       if (array->type->is_matrix()) {
 	 /* Array access of a matrix results in a vector.
 	  */
@@ -843,7 +874,7 @@ ir_call::constant_expression_value()
     * - Fill "data" with appopriate constant data
     * - Return an ir_constant directly.
     */
-   void *mem_ctx = talloc_parent(this);
+   void *mem_ctx = ralloc_parent(this);
    ir_expression *expr = NULL;
 
    ir_constant_data data;

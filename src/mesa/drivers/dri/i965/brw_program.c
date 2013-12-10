@@ -36,7 +36,7 @@
 #include "program/program.h"
 #include "program/programopt.h"
 #include "tnl/tnl.h"
-#include "talloc.h"
+#include "../glsl/ralloc.h"
 
 #include "brw_context.h"
 #include "brw_wm.h"
@@ -115,7 +115,7 @@ shader_error(GLcontext *ctx, struct gl_program *prog, const char *msg)
    shader = _mesa_lookup_shader_program(ctx, prog->Id);
 
    if (shader) {
-      shader->InfoLog = talloc_strdup_append(shader->InfoLog, msg);
+      ralloc_strcat(&shader->InfoLog, msg);
       shader->LinkStatus = GL_FALSE;
    }
 }
@@ -148,15 +148,9 @@ static GLboolean brwProgramStringNotify( GLcontext *ctx,
        * using the new FS backend.
        */
       shader_program = _mesa_lookup_shader_program(ctx, prog->Id);
-      if (shader_program) {
-	 for (i = 0; i < shader_program->_NumLinkedShaders; i++) {
-	    struct brw_shader *shader;
-
-	    shader = (struct brw_shader *)shader_program->_LinkedShaders[i];
-	    if (shader->base.Type == GL_FRAGMENT_SHADER && shader->ir) {
-	       return GL_TRUE;
-	    }
-	 }
+      if (shader_program
+	  && shader_program->_LinkedShaders[MESA_SHADER_FRAGMENT]) {
+	 return GL_TRUE;
       }
    }
    else if (target == GL_VERTEX_PROGRAM_ARB) {

@@ -16,6 +16,8 @@ GLCPP_SOURCES = \
 	glcpp/glcpp.c
 
 C_SOURCES = \
+	strtod.c \
+	ralloc.c \
 	$(LIBGLCPP_SOURCES)
 
 CXX_SOURCES = \
@@ -75,14 +77,15 @@ CXX_SOURCES = \
 	loop_analysis.cpp \
 	loop_controls.cpp \
 	loop_unroll.cpp \
+	lower_discard.cpp \
 	lower_noise.cpp \
 	lower_variable_index_to_cond_assign.cpp \
+	opt_discard_simplification.cpp \
 	opt_redundant_jumps.cpp \
 	s_expression.cpp
 
 LIBS = \
-	$(TOP)/src/glsl/libglsl.a \
-	$(TALLOC_LIBS)
+	$(TOP)/src/glsl/libglsl.a
 
 APPS = glsl_compiler glcpp/glcpp
 
@@ -111,7 +114,6 @@ OBJECTS = \
 	$(CXX_SOURCES:.cpp=.o)
 
 INCLUDES = \
-	$(TALLOC_CFLAGS) \
 	-I. \
 	-I../mesa \
 	-I../mapi \
@@ -177,7 +179,7 @@ builtins: builtin_function.cpp builtins/profiles/* builtins/ir/* builtins/tools/
 	cp builtins/tools/builtin_function.cpp .
 	make glsl_compiler
 	@echo Regenerating builtin_function.cpp...
-	./builtins/tools/generate_builtins.py > builtin_function.cpp
+	$(PYTHON2) $(PYTHON_FLAGS) builtins/tools/generate_builtins.py > builtin_function.cpp
 	@echo Rebuilding the real compiler...
 	make glsl_compiler
 

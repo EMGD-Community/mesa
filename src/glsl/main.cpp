@@ -20,8 +20,8 @@
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
  * DEALINGS IN THE SOFTWARE.
  */
-#include <cstdlib>
-#include <cstdio>
+#include <stdlib.h>
+#include <stdio.h>
 #include <getopt.h>
 
 #include <sys/types.h>
@@ -40,8 +40,19 @@
 extern "C" struct gl_shader *
 _mesa_new_shader(GLcontext *ctx, GLuint name, GLenum type);
 
+extern "C" void
+_mesa_reference_shader(struct gl_context *ctx, struct gl_shader **ptr,
+                       struct gl_shader *sh);
+
 /* Copied from shader_api.c for the stand-alone compiler.
  */
+void
+_mesa_reference_shader(struct gl_context *ctx, struct gl_shader **ptr,
+                       struct gl_shader *sh)
+{
+   *ptr = sh;
+}
+
 struct gl_shader *
 _mesa_new_shader(GLcontext *ctx, GLuint name, GLenum type)
 {
@@ -50,7 +61,7 @@ _mesa_new_shader(GLcontext *ctx, GLuint name, GLenum type)
    (void) ctx;
 
    assert(type == GL_FRAGMENT_SHADER || type == GL_VERTEX_SHADER);
-   shader = talloc_zero(NULL, struct gl_shader);
+   shader = rzalloc(NULL, struct gl_shader);
    if (shader) {
       shader->Type = type;
       shader->Name = name;
@@ -66,10 +77,16 @@ initialize_context(GLcontext *ctx, gl_api api)
 
    ctx->API = api;
 
+   ctx->Extensions.ARB_ES2_compatibility = GL_TRUE;
    ctx->Extensions.ARB_draw_buffers = GL_TRUE;
    ctx->Extensions.ARB_fragment_coord_conventions = GL_TRUE;
    ctx->Extensions.EXT_texture_array = GL_TRUE;
    ctx->Extensions.NV_texture_rectangle = GL_TRUE;
+
+   /* GLSL 1.30 isn't fully supported, but we need to advertise 1.30 so that
+    * the built-in functions for 1.30 can be built.
+    */
+   ctx->Const.GLSLVersion = 130;
 
    /* 1.10 minimums. */
    ctx->Const.MaxLights = 8;
@@ -94,7 +111,7 @@ initialize_context(GLcontext *ctx, gl_api api)
    ctx->Driver.NewShader = _mesa_new_shader;
 }
 
-/* Returned string will have 'ctx' as its talloc owner. */
+/* Returned string will have 'ctx' as its ralloc owner. */
 static char *
 load_text_file(void *ctx, const char *file_name)
 {
@@ -108,7 +125,7 @@ load_text_file(void *ctx, const char *file_name)
 	}
 
 	if (fstat(fd, & st) == 0) {
-	   text = (char *) talloc_size(ctx, st.st_size + 1);
+	   text = (char *) ralloc_size(ctx, st.st_size + 1);
 		if (text != NULL) {
 			do {
 				ssize_t bytes = read(fd, text + total_read,
@@ -197,26 +214,7 @@ compile_shader(GLcontext *ctx, struct gl_shader *shader)
    if (!state->error && !shader->ir->is_empty()) {
       bool progress;
       do {
-	 progress = false;
-
-	 progress = do_function_inlining(shader->ir) || progress;
-	 progress = do_if_simplification(shader->ir) || progress;
-	 progress = do_copy_propagation(shader->ir) || progress;
-	 progress = do_dead_code_local(shader->ir) || progress;
-	 progress = do_dead_code_unlinked(shader->ir) || progress;
-	 progress = do_tree_grafting(shader->ir) || progress;
-	 progress = do_constant_propagation(shader->ir) || progress;
-	 progress = do_constant_variable_unlinked(shader->ir) || progress;
-	 progress = do_constant_folding(shader->ir) || progress;
-	 progress = do_algebraic(shader->ir) || progress;
-	 progress = do_vec_index_to_swizzle(shader->ir) || progress;
-	 progress = do_vec_index_to_cond_assign(shader->ir) || progress;
-	 progress = do_swizzle_swizzle(shader->ir) || progress;
-
-	 loop_state *ls = analyze_loop_variables(shader->ir);
-	 progress = set_loop_controls(shader->ir, ls) || progress;
-	 progress = unroll_loops(shader->ir, ls, 32) || progress;
-	 delete ls;
+	 progress = do_common_optimization(shader->ir, false, 32);
       } while (progress);
 
       validate_ir_tree(shader->ir);
@@ -236,14 +234,14 @@ compile_shader(GLcontext *ctx, struct gl_shader *shader)
    shader->num_builtins_to_link = state->num_builtins_to_link;
 
    if (shader->InfoLog)
-      talloc_free(shader->InfoLog);
+      ralloc_free(shader->InfoLog);
 
    shader->InfoLog = state->info_log;
 
    /* Retain any live IR, but trash the rest. */
    reparent_ir(shader->ir, shader);
 
-   talloc_free(state);
+   ralloc_free(state);
 
    return;
 }
@@ -268,16 +266,16 @@ main(int argc, char **argv)
 
    struct gl_shader_program *whole_program;
 
-   whole_program = talloc_zero (NULL, struct gl_shader_program);
+   whole_program = rzalloc (NULL, struct gl_shader_program);
    assert(whole_program != NULL);
 
    for (/* empty */; argc > optind; optind++) {
-      whole_program->Shaders = (struct gl_shader **)
-	 talloc_realloc(whole_program, whole_program->Shaders,
-			struct gl_shader *, whole_program->NumShaders + 1);
+      whole_program->Shaders =
+	 reralloc(whole_program, whole_program->Shaders,
+		  struct gl_shader *, whole_program->NumShaders + 1);
       assert(whole_program->Shaders != NULL);
 
-      struct gl_shader *shader = talloc_zero(whole_program, gl_shader);
+      struct gl_shader *shader = rzalloc(whole_program, gl_shader);
 
       whole_program->Shaders[whole_program->NumShaders] = shader;
       whole_program->NumShaders++;
@@ -319,10 +317,10 @@ main(int argc, char **argv)
 	 printf("Info log for linking:\n%s\n", whole_program->InfoLog);
    }
 
-   for (unsigned i = 0; i < whole_program->_NumLinkedShaders; i++)
-      talloc_free(whole_program->_LinkedShaders[i]);
+   for (unsigned i = 0; i < MESA_SHADER_TYPES; i++)
+      ralloc_free(whole_program->_LinkedShaders[i]);
 
-   talloc_free(whole_program);
+   ralloc_free(whole_program);
    _mesa_glsl_release_types();
    _mesa_glsl_release_functions();
 

@@ -26,6 +26,7 @@
 #ifndef S_EXPRESSION_H
 #define S_EXPRESSION_H
 
+#include "strtod.h"
 #include "list.h"
 
 #define SX_AS_(t,x) ((x) && ((s_expression*) x)->is_##t()) ? ((s_##t*) (x)) \
@@ -50,7 +51,7 @@ public:
     * Read an S-Expression from the given string.
     * Advances the supplied pointer to just after the expression read.
     *
-    * Any allocation will be performed with 'ctx' as the talloc owner.
+    * Any allocation will be performed with 'ctx' as the ralloc owner.
     */
    static s_expression *read_expression(void *ctx, const char *&src);
 

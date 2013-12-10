@@ -481,6 +481,8 @@ unsigned int EG_GetNumOperands(GLuint opcode, GLuint nIsOp3)
     case EG_OP2_INST_FLT_TO_INT:
     case EG_OP2_INST_SIN:
     case EG_OP2_INST_COS:
+    case EG_OP2_INST_FLT_TO_INT_FLOOR:
+    case EG_OP2_INST_MOVA_INT:
         return 1;
         
     default: radeon_error(
@@ -1134,7 +1136,7 @@ GLboolean EG_assemble_vfetch_instruction(r700_AssemblerBase* pAsm,
              EG_VTX_WORD1__DST_SEL_W_shift,
              EG_VTX_WORD1__DST_SEL_W_mask);
     
-    SETfield(vfetch_instruction_ptr->m_Word1.val, 0, /* use format here, in r6/r7, format used set in const, need to use same */
+    SETfield(vfetch_instruction_ptr->m_Word1.val, 1, 
              EG_VTX_WORD1__UCF_shift,
              EG_VTX_WORD1__UCF_bit);
     SETfield(vfetch_instruction_ptr->m_Word1.val, data_format,
@@ -3297,23 +3299,76 @@ GLboolean assemble_ARL(r700_AssemblerBase *pAsm)
         return GL_FALSE;
     }
 
-    pAsm->D.dst.opcode = SQ_OP2_INST_MOVA_FLOOR;
-    setaddrmode_PVSDST(&(pAsm->D.dst), ADDR_ABSOLUTE);
-    pAsm->D.dst.rtype = DST_REG_TEMPORARY;
-    pAsm->D.dst.reg = 0;
-    pAsm->D.dst.writex = 0;
-    pAsm->D.dst.writey = 0;
-    pAsm->D.dst.writez = 0;
-    pAsm->D.dst.writew = 0;
-
-    if( GL_FALSE == assemble_src(pAsm, 0, -1) )
+    if(8 == pAsm->unAsic)
     {
-        return GL_FALSE;
+        /* Evergreen */
+
+        /* Float to Signed Integer Using FLOOR */
+        pAsm->D.dst.opcode = EG_OP2_INST_FLT_TO_INT_FLOOR;
+        setaddrmode_PVSDST(&(pAsm->D.dst), ADDR_ABSOLUTE);
+        pAsm->D.dst.rtype = DST_REG_TEMPORARY;
+        pAsm->D.dst.reg = 0;
+        pAsm->D.dst.writex = 0;
+        pAsm->D.dst.writey = 0;
+        pAsm->D.dst.writez = 0;
+        pAsm->D.dst.writew = 0;
+
+        if( GL_FALSE == assemble_src(pAsm, 0, -1) )
+        {
+            return GL_FALSE;
+        }
+
+        if( GL_FALSE == next_ins(pAsm) )
+        {
+            return GL_FALSE;
+        }
+
+        /* Copy Signed Integer To Integer in AR and GPR */
+        pAsm->D.dst.opcode = EG_OP2_INST_MOVA_INT;
+        setaddrmode_PVSDST(&(pAsm->D.dst), ADDR_ABSOLUTE);
+        pAsm->D.dst.rtype = DST_REG_TEMPORARY;
+        pAsm->D.dst.reg = 0;
+        pAsm->D.dst.writex = 0;
+        pAsm->D.dst.writey = 0;
+        pAsm->D.dst.writez = 0;
+        pAsm->D.dst.writew = 0;
+
+        if( GL_FALSE == assemble_src(pAsm, 0, -1) )
+        {
+            return GL_FALSE;
+        }
+
+        if( GL_FALSE == next_ins(pAsm) )
+        {
+            return GL_FALSE;
+        }
     }
-
-    if( GL_FALSE == next_ins(pAsm) )
+    else
     {
-        return GL_FALSE;
+        /* r6xx/r7xx */
+
+        /* Truncate floating-point to the nearest integer
+           in the range [-256, +255], and copy to AR and
+           to a GPR.
+        */
+        pAsm->D.dst.opcode = SQ_OP2_INST_MOVA_FLOOR;
+        setaddrmode_PVSDST(&(pAsm->D.dst), ADDR_ABSOLUTE);
+        pAsm->D.dst.rtype = DST_REG_TEMPORARY;
+        pAsm->D.dst.reg = 0;
+        pAsm->D.dst.writex = 0;
+        pAsm->D.dst.writey = 0;
+        pAsm->D.dst.writez = 0;
+        pAsm->D.dst.writew = 0;
+
+        if( GL_FALSE == assemble_src(pAsm, 0, -1) )
+        {
+            return GL_FALSE;
+        }
+
+        if( GL_FALSE == next_ins(pAsm) )
+        {
+            return GL_FALSE;
+        }
     }
 
     return GL_TRUE;
@@ -3334,7 +3389,14 @@ GLboolean assemble_CMP(r700_AssemblerBase *pAsm)
         return GL_FALSE;
     }
 
-    pAsm->D.dst.opcode = SQ_OP3_INST_CNDGE;
+    if(8 == pAsm->unAsic)
+    {
+	pAsm->D.dst.opcode = EG_OP3_INST_CNDGE;
+    }
+    else
+    {
+	pAsm->D.dst.opcode = SQ_OP3_INST_CNDGE;
+    }
     pAsm->D.dst.op3     = 1;  
 
     tmp = (-1);
@@ -3416,8 +3478,14 @@ GLboolean assemble_TRIG(r700_AssemblerBase *pAsm, BITS opcode)
     checkop1(pAsm);
 
     tmp = gethelpr(pAsm);
-
-    pAsm->D.dst.opcode = SQ_OP3_INST_MULADD;
+    if(8 == pAsm->unAsic)
+    {
+        pAsm->D.dst.opcode = EG_OP3_INST_MULADD;
+    }
+    else
+    {
+        pAsm->D.dst.opcode = SQ_OP3_INST_MULADD;
+    }
     pAsm->D.dst.op3    = 1;
 
     setaddrmode_PVSDST(&(pAsm->D.dst), ADDR_ABSOLUTE);
@@ -3457,7 +3525,14 @@ GLboolean assemble_TRIG(r700_AssemblerBase *pAsm, BITS opcode)
     {
         return GL_FALSE;
     }
-    pAsm->D.dst.opcode = SQ_OP3_INST_MULADD;
+    if(8 == pAsm->unAsic)
+    {
+        pAsm->D.dst.opcode = EG_OP3_INST_MULADD;
+    }
+    else
+    {
+        pAsm->D.dst.opcode = SQ_OP3_INST_MULADD;
+    }
     pAsm->D.dst.op3    = 1;
 
     setaddrmode_PVSDST(&(pAsm->D.dst), ADDR_ABSOLUTE);
@@ -4742,7 +4817,14 @@ GLboolean assemble_SCS(r700_AssemblerBase *pAsm)
 
     tmp = gethelpr(pAsm);
 
-    pAsm->D.dst.opcode = SQ_OP3_INST_MULADD;
+    if(8 == pAsm->unAsic)
+    {
+        pAsm->D.dst.opcode = EG_OP3_INST_MULADD;
+    }
+    else
+    {
+        pAsm->D.dst.opcode = SQ_OP3_INST_MULADD;
+    }
     pAsm->D.dst.op3    = 1;
 
     setaddrmode_PVSDST(&(pAsm->D.dst), ADDR_ABSOLUTE);
@@ -4782,7 +4864,14 @@ GLboolean assemble_SCS(r700_AssemblerBase *pAsm)
     {
         return GL_FALSE;
     }
-    pAsm->D.dst.opcode = SQ_OP3_INST_MULADD;
+    if(8 == pAsm->unAsic)
+    {
+        pAsm->D.dst.opcode = EG_OP3_INST_MULADD;
+    }
+    else
+    {
+        pAsm->D.dst.opcode = SQ_OP3_INST_MULADD;
+    }
     pAsm->D.dst.op3    = 1;
 
     setaddrmode_PVSDST(&(pAsm->D.dst), ADDR_ABSOLUTE);
@@ -5010,7 +5099,14 @@ GLboolean assemble_SSG(r700_AssemblerBase *pAsm)
     
     GLuint tmp = gethelpr(pAsm);
     /* tmp = (src > 0 ? 1 : src) */
-    pAsm->D.dst.opcode = SQ_OP3_INST_CNDGT;
+    if(8 == pAsm->unAsic)
+    {
+        pAsm->D.dst.opcode = EG_OP3_INST_CNDGT;
+    }
+    else
+    {
+        pAsm->D.dst.opcode = SQ_OP3_INST_CNDGT;
+    }
     pAsm->D.dst.op3    = 1;
     pAsm->D.dst.rtype = DST_REG_TEMPORARY;
     pAsm->D.dst.reg   = tmp;
@@ -5033,7 +5129,14 @@ GLboolean assemble_SSG(r700_AssemblerBase *pAsm)
     }
 
     /* dst = (-tmp > 0 ? -1 : tmp) */
-    pAsm->D.dst.opcode = SQ_OP3_INST_CNDGT;
+    if(8 == pAsm->unAsic)
+    {
+        pAsm->D.dst.opcode = EG_OP3_INST_CNDGT;
+    }
+    else
+    {
+        pAsm->D.dst.opcode = SQ_OP3_INST_CNDGT;
+    }
     pAsm->D.dst.op3    = 1;
 
     if( GL_FALSE == assemble_dst(pAsm) )

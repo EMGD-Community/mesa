@@ -370,6 +370,13 @@ modulus_result_type(const struct glsl_type *type_a,
 		    const struct glsl_type *type_b,
 		    struct _mesa_glsl_parse_state *state, YYLTYPE *loc)
 {
+   if (state->language_version < 130) {
+      _mesa_glsl_error(loc, state,
+                       "operator '%%' is reserved in %s",
+                       state->version_string);
+      return glsl_type::error_type;
+   }
+
    /* From GLSL 1.50 spec, page 56:
     *    "The operator modulus (%) operates on signed or unsigned integers or
     *    integer vectors. The operand types must both be signed or both be
@@ -585,7 +592,7 @@ do_assignment(exec_list *instructions, struct _mesa_glsl_parse_state *state,
 static ir_rvalue *
 get_lvalue_copy(exec_list *instructions, ir_rvalue *lvalue)
 {
-   void *ctx = talloc_parent(lvalue);
+   void *ctx = ralloc_parent(lvalue);
    ir_variable *var;
 
    var = new(ctx) ir_variable(lvalue->type, "_post_incdec_tmp",
@@ -615,6 +622,94 @@ ast_node::hir(exec_list *instructions,
    return NULL;
 }
 
+static void
+mark_whole_array_access(ir_rvalue *access)
+{
+   ir_dereference_variable *deref = access->as_dereference_variable();
+
+   if (deref) {
+      deref->var->max_array_access = deref->type->length - 1;
+   }
+}
+
+static ir_rvalue *
+do_comparison(void *mem_ctx, int operation, ir_rvalue *op0, ir_rvalue *op1)
+{
+   int join_op;
+   ir_rvalue *cmp = NULL;
+
+   if (operation == ir_binop_all_equal)
+      join_op = ir_binop_logic_and;
+   else
+      join_op = ir_binop_logic_or;
+
+   switch (op0->type->base_type) {
+   case GLSL_TYPE_FLOAT:
+   case GLSL_TYPE_UINT:
+   case GLSL_TYPE_INT:
+   case GLSL_TYPE_BOOL:
+      return new(mem_ctx) ir_expression(operation, op0, op1);
+
+   case GLSL_TYPE_ARRAY: {
+      for (unsigned int i = 0; i < op0->type->length; i++) {
+	 ir_rvalue *e0, *e1, *result;
+
+	 e0 = new(mem_ctx) ir_dereference_array(op0->clone(mem_ctx, NULL),
+						new(mem_ctx) ir_constant(i));
+	 e1 = new(mem_ctx) ir_dereference_array(op1->clone(mem_ctx, NULL),
+						new(mem_ctx) ir_constant(i));
+	 result = do_comparison(mem_ctx, operation, e0, e1);
+
+	 if (cmp) {
+	    cmp = new(mem_ctx) ir_expression(join_op, cmp, result);
+	 } else {
+	    cmp = result;
+	 }
+      }
+
+      mark_whole_array_access(op0);
+      mark_whole_array_access(op1);
+      break;
+   }
+
+   case GLSL_TYPE_STRUCT: {
+      for (unsigned int i = 0; i < op0->type->length; i++) {
+	 ir_rvalue *e0, *e1, *result;
+	 const char *field_name = op0->type->fields.structure[i].name;
+
+	 e0 = new(mem_ctx) ir_dereference_record(op0->clone(mem_ctx, NULL),
+						 field_name);
+	 e1 = new(mem_ctx) ir_dereference_record(op1->clone(mem_ctx, NULL),
+						 field_name);
+	 result = do_comparison(mem_ctx, operation, e0, e1);
+
+	 if (cmp) {
+	    cmp = new(mem_ctx) ir_expression(join_op, cmp, result);
+	 } else {
+	    cmp = result;
+	 }
+      }
+      break;
+   }
+
+   case GLSL_TYPE_ERROR:
+   case GLSL_TYPE_VOID:
+   case GLSL_TYPE_SAMPLER:
+      /* I assume a comparison of a struct containing a sampler just
+       * ignores the sampler present in the type.
+       */
+      break;
+
+   default:
+      assert(!"Should not get here.");
+      break;
+   }
+
+   if (cmp == NULL)
+      cmp = new(mem_ctx) ir_constant(true);
+
+   return cmp;
+}
 
 ir_rvalue *
 ast_expression::hir(exec_list *instructions,
@@ -800,11 +895,10 @@ ast_expression::hir(exec_list *instructions,
 	 error_emitted = true;
       }
 
-      result = new(ctx) ir_expression(operations[this->oper], glsl_type::bool_type,
-				      op[0], op[1]);
+      result = do_comparison(ctx, operations[this->oper], op[0], op[1]);
       type = glsl_type::bool_type;
 
-      assert(result->type == glsl_type::bool_type);
+      assert(error_emitted || (result->type == glsl_type::bool_type));
       break;
 
    case ast_bit_and:
@@ -1378,6 +1472,7 @@ ast_expression::hir(exec_list *instructions,
       result = new(ctx) ir_dereference_variable(var);
 
       if (var != NULL) {
+	 var->used = true;
 	 type = result->type;
       } else {
 	 _mesa_glsl_error(& loc, state, "`%s' undeclared",
@@ -1552,10 +1647,17 @@ apply_type_qualifier_to_variable(const struct ast_type_qualifier *qual,
 				 struct _mesa_glsl_parse_state *state,
 				 YYLTYPE *loc)
 {
-   if (qual->invariant)
-      var->invariant = 1;
+   if (qual->invariant) {
+      if (var->used) {
+	 _mesa_glsl_error(loc, state,
+			  "variable `%s' may not be redeclared "
+			  "`invariant' after being used",
+			  var->name);
+      } else {
+	 var->invariant = 1;
+      }
+   }
 
-   /* FINISHME: Mark 'in' variables at global scope as read-only. */
    if (qual->constant || qual->attribute || qual->uniform
        || (qual->varying && (state->target == fragment_shader)))
       var->read_only = 1;
@@ -1604,6 +1706,25 @@ apply_type_qualifier_to_variable(const struct ast_type_qualifier *qual,
       var->mode = ir_var_out;
    else if (qual->uniform)
       var->mode = ir_var_uniform;
+
+   if (state->all_invariant && (state->current_function == NULL)) {
+      switch (state->target) {
+      case vertex_shader:
+	 if (var->mode == ir_var_out)
+	    var->invariant = true;
+	 break;
+      case geometry_shader:
+	 if ((var->mode == ir_var_in) || (var->mode == ir_var_out))
+	    var->invariant = true;
+	 break;
+      case fragment_shader:
+	 if (var->mode == ir_var_in)
+	    var->invariant = true;
+	 break;
+      case ir_shader:
+         ; /* no op */
+      }
+   }
 
    if (qual->flat)
       var->interpolation = ir_var_flat;
@@ -1682,6 +1803,11 @@ ast_declarator_list::hir(exec_list *instructions,
 	    _mesa_glsl_error(& loc, state,
 			     "`%s' cannot be marked invariant, fragment shader "
 			     "inputs only\n", decl->identifier);
+	 } else if (earlier->used) {
+	    _mesa_glsl_error(& loc, state,
+			     "variable `%s' may not be redeclared "
+			     "`invariant' after being used",
+			     earlier->name);
 	 } else {
 	    earlier->invariant = true;
 	 }
@@ -1751,20 +1877,22 @@ ast_declarator_list::hir(exec_list *instructions,
        *
        *     Local variables can only use the qualifier const."
        *
-       * This is relaxed in GLSL 1.30.
+       * This is relaxed in GLSL 1.30.  It is also relaxed by any extension
+       * that adds the 'layout' keyword.
        */
-      if (state->language_version < 120) {
+      if ((state->language_version < 130)
+	  && !state->ARB_fragment_coord_conventions_enable) {
 	 if (this->type->qualifier.out) {
 	    _mesa_glsl_error(& loc, state,
 			     "`out' qualifier in declaration of `%s' "
-			     "only valid for function parameters in GLSL 1.10.",
-			     decl->identifier);
+			     "only valid for function parameters in %s.",
+			     decl->identifier, state->version_string);
 	 }
 	 if (this->type->qualifier.in) {
 	    _mesa_glsl_error(& loc, state,
 			     "`in' qualifier in declaration of `%s' "
-			     "only valid for function parameters in GLSL 1.10.",
-			     decl->identifier);
+			     "only valid for function parameters in %s.",
+			     decl->identifier, state->version_string);
 	 }
 	 /* FINISHME: Test for other invalid qualifiers. */
       }
@@ -1820,6 +1948,8 @@ ast_declarator_list::hir(exec_list *instructions,
 			     mode, var->name, extra);
 	 }
       } else if (var->mode == ir_var_in) {
+         var->read_only = true;
+
 	 if (state->target == vertex_shader) {
 	    bool error_emitted = false;
 
@@ -1870,6 +2000,45 @@ ast_declarator_list::hir(exec_list *instructions,
 	       error_emitted = true;
 	    }
 	 }
+      }
+
+      /* Precision qualifiers exists only in GLSL versions 1.00 and >= 1.30.
+       */
+      if (this->type->specifier->precision != ast_precision_none
+          && state->language_version != 100
+          && state->language_version < 130) {
+
+         _mesa_glsl_error(&loc, state,
+                          "precision qualifiers are supported only in GLSL ES "
+                          "1.00, and GLSL 1.30 and later");
+      }
+
+
+      /* Precision qualifiers only apply to floating point and integer types.
+       *
+       * From section 4.5.2 of the GLSL 1.30 spec:
+       *    "Any floating point or any integer declaration can have the type
+       *    preceded by one of these precision qualifiers [...] Literal
+       *    constants do not have precision qualifiers. Neither do Boolean
+       *    variables.
+       *
+       * In GLSL ES, sampler types are also allowed.
+       *
+       * From page 87 of the GLSL ES spec:
+       *    "RESOLUTION: Allow sampler types to take a precision qualifier."
+       */
+      if (this->type->specifier->precision != ast_precision_none
+          && !var->type->is_float()
+          && !var->type->is_integer()
+          && !(var->type->is_sampler() && state->es_shader)
+          && !(var->type->is_array()
+               && (var->type->fields.array->is_float()
+                   || var->type->fields.array->is_integer()))) {
+
+         _mesa_glsl_error(&loc, state,
+                          "precision qualifiers apply only to floating point"
+                          "%s types", state->es_shader ? ", integer, and sampler"
+						       : "and integer");
       }
 
       /* Process the initializer and add its instructions to a temporary
@@ -1954,10 +2123,37 @@ ast_declarator_list::hir(exec_list *instructions,
 
 	    /* Never emit code to initialize a uniform.
 	     */
-	    if (!this->type->qualifier.uniform)
+	    const glsl_type *initializer_type;
+	    if (!this->type->qualifier.uniform) {
 	       result = do_assignment(&initializer_instructions, state,
 				      lhs, rhs,
 				      this->get_location());
+	       initializer_type = result->type;
+	    } else
+	       initializer_type = rhs->type;
+
+	    /* If the declared variable is an unsized array, it must inherrit
+	     * its full type from the initializer.  A declaration such as
+	     *
+	     *     uniform float a[] = float[](1.0, 2.0, 3.0, 3.0);
+	     *
+	     * becomes
+	     *
+	     *     uniform float a[4] = float[](1.0, 2.0, 3.0, 3.0);
+	     *
+	     * The assignment generated in the if-statement (below) will also
+	     * automatically handle this case for non-uniforms.
+	     *
+	     * If the declared variable is not an array, the types must
+	     * already match exactly.  As a result, the type assignment
+	     * here can be done unconditionally.  For non-uniforms the call
+	     * to do_assignment can change the type of the initializer (via
+	     * the implicit conversion rules).  For uniforms the initializer
+	     * must be a constant expression, and the type of that expression
+	     * was validated above.
+	     */
+	    var->type = initializer_type;
+
 	    var->read_only = temp;
 	 }
       }
@@ -1970,7 +2166,8 @@ ast_declarator_list::hir(exec_list *instructions,
        */
       if (this->type->qualifier.constant && decl->initializer == NULL) {
 	 _mesa_glsl_error(& loc, state,
-			  "const declaration of `%s' must be initialized");
+			  "const declaration of `%s' must be initialized",
+			  decl->identifier);
       }
 
       /* Check if this declaration is actually a re-declaration, either to
@@ -2021,7 +2218,7 @@ ast_declarator_list::hir(exec_list *instructions,
 	    earlier->type = var->type;
 	    delete var;
 	    var = NULL;
-	 } else if (state->extensions->ARB_fragment_coord_conventions
+	 } else if (state->ARB_fragment_coord_conventions_enable
 		    && strcmp(var->name, "gl_FragCoord") == 0
 		    && earlier->type == var->type
 		    && earlier->mode == var->mode) {
@@ -2437,28 +2634,26 @@ ast_jump_statement::hir(exec_list *instructions,
       assert(state->current_function);
 
       if (opt_return_value) {
-	 if (state->current_function->return_type->base_type ==
-	     GLSL_TYPE_VOID) {
-	    YYLTYPE loc = this->get_location();
+	 ir_rvalue *const ret = opt_return_value->hir(instructions, state);
 
-	    _mesa_glsl_error(& loc, state,
-			     "`return` with a value, in function `%s' "
-			     "returning void",
-			     state->current_function->function_name());
-	 }
-
-	 ir_expression *const ret = (ir_expression *)
-	    opt_return_value->hir(instructions, state);
-	 assert(ret != NULL);
+	 /* The value of the return type can be NULL if the shader says
+	  * 'return foo();' and foo() is a function that returns void.
+	  *
+	  * NOTE: The GLSL spec doesn't say that this is an error.  The type
+	  * of the return value is void.  If the return type of the function is
+	  * also void, then this should compile without error.  Seriously.
+	  */
+	 const glsl_type *const ret_type =
+	    (ret == NULL) ? glsl_type::void_type : ret->type;
 
 	 /* Implicit conversions are not allowed for return values. */
-	 if (state->current_function->return_type != ret->type) {
+	 if (state->current_function->return_type != ret_type) {
 	    YYLTYPE loc = this->get_location();
 
 	    _mesa_glsl_error(& loc, state,
 			     "`return' with wrong type %s, in function `%s' "
 			     "returning %s",
-			     ret->type->name,
+			     ret_type->name,
 			     state->current_function->function_name(),
 			     state->current_function->return_type->name);
 	 }
@@ -2675,6 +2870,58 @@ ir_rvalue *
 ast_type_specifier::hir(exec_list *instructions,
 			  struct _mesa_glsl_parse_state *state)
 {
+   if (!this->is_precision_statement && this->structure == NULL)
+      return NULL;
+
+   YYLTYPE loc = this->get_location();
+
+   if (this->precision != ast_precision_none
+       && state->language_version != 100
+       && state->language_version < 130) {
+      _mesa_glsl_error(&loc, state,
+                       "precision qualifiers exist only in "
+                       "GLSL ES 1.00, and GLSL 1.30 and later");
+      return NULL;
+   }
+   if (this->precision != ast_precision_none
+       && this->structure != NULL) {
+      _mesa_glsl_error(&loc, state,
+                       "precision qualifiers do not apply to structures");
+      return NULL;
+   }
+
+   /* If this is a precision statement, check that the type to which it is
+    * applied is either float or int.
+    *
+    * From section 4.5.3 of the GLSL 1.30 spec:
+    *    "The precision statement
+    *       precision precision-qualifier type;
+    *    can be used to establish a default precision qualifier. The type
+    *    field can be either int or float [...].  Any other types or
+    *    qualifiers will result in an error.
+    */
+   if (this->is_precision_statement) {
+      assert(this->precision != ast_precision_none);
+      assert(this->structure == NULL); /* The check for structures was
+                                        * performed above. */
+      if (this->is_array) {
+         _mesa_glsl_error(&loc, state,
+                          "default precision statements do not apply to "
+                          "arrays");
+         return NULL;
+      }
+      if (this->type_specifier != ast_float
+          && this->type_specifier != ast_int) {
+         _mesa_glsl_error(&loc, state,
+                          "default precision statements apply only to types "
+                          "float and int");
+         return NULL;
+      }
+
+      /* FINISHME: Translate precision statements into IR. */
+      return NULL;
+   }
+
    if (this->structure != NULL)
       return this->structure->hir(instructions, state);
 
@@ -2705,7 +2952,7 @@ ast_struct_specifier::hir(exec_list *instructions,
     * the types to HIR.  This ensures that structure definitions embedded in
     * other structure definitions are processed.
     */
-   glsl_struct_field *const fields = talloc_array(state, glsl_struct_field,
+   glsl_struct_field *const fields = ralloc_array(state, glsl_struct_field,
 						  decl_count);
 
    unsigned i = 0;
@@ -2751,11 +2998,9 @@ ast_struct_specifier::hir(exec_list *instructions,
    if (!state->symbols->add_type(name, t)) {
       _mesa_glsl_error(& loc, state, "struct `%s' previously defined", name);
    } else {
-
-      const glsl_type **s = (const glsl_type **)
-	 realloc(state->user_structures,
-		 sizeof(state->user_structures[0]) *
-		 (state->num_user_structures + 1));
+      const glsl_type **s = reralloc(state, state->user_structures,
+				     const glsl_type *,
+				     state->num_user_structures + 1);
       if (s != NULL) {
 	 s[state->num_user_structures] = t;
 	 state->user_structures = s;

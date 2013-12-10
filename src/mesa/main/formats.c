@@ -702,7 +702,7 @@ static struct gl_format_info format_info[MESA_FORMAT_COUNT] =
    {
       MESA_FORMAT_SIGNED_R8,        /* Name */
       "MESA_FORMAT_SIGNED_R8",      /* StrName */
-      GL_RGBA,                      /* BaseFormat */
+      GL_RED,                       /* BaseFormat */
       GL_SIGNED_NORMALIZED,         /* DataType */
       8, 0, 0, 0,                   /* Red/Green/Blue/AlphaBits */
       0, 0, 0, 0, 0,                /* Lum/Int/Index/Depth/StencilBits */
@@ -711,7 +711,7 @@ static struct gl_format_info format_info[MESA_FORMAT_COUNT] =
    {
       MESA_FORMAT_SIGNED_RG88,
       "MESA_FORMAT_SIGNED_RG88",
-      GL_RGBA,
+      GL_RG,
       GL_SIGNED_NORMALIZED,
       8, 8, 0, 0,
       0, 0, 0, 0, 0,
@@ -720,7 +720,7 @@ static struct gl_format_info format_info[MESA_FORMAT_COUNT] =
    {
       MESA_FORMAT_SIGNED_RGBX8888,
       "MESA_FORMAT_SIGNED_RGBX8888",
-      GL_RGBA,
+      GL_RGB,
       GL_SIGNED_NORMALIZED,
       8, 8, 8, 0,
       0, 0, 0, 0, 0,
@@ -749,7 +749,7 @@ static struct gl_format_info format_info[MESA_FORMAT_COUNT] =
    {
       MESA_FORMAT_SIGNED_R_16,
       "MESA_FORMAT_SIGNED_R_16",
-      GL_RGBA,
+      GL_RED,
       GL_SIGNED_NORMALIZED,
       16, 0, 0, 0,
       0, 0, 0, 0, 0,
@@ -758,7 +758,7 @@ static struct gl_format_info format_info[MESA_FORMAT_COUNT] =
    {
       MESA_FORMAT_SIGNED_RG_16,
       "MESA_FORMAT_SIGNED_RG_16",
-      GL_RGBA,
+      GL_RG,
       GL_SIGNED_NORMALIZED,
       16, 16, 0, 0,
       0, 0, 0, 0, 0,
@@ -767,7 +767,7 @@ static struct gl_format_info format_info[MESA_FORMAT_COUNT] =
    {
       MESA_FORMAT_SIGNED_RGB_16,
       "MESA_FORMAT_SIGNED_RGB_16",
-      GL_RGBA,
+      GL_RGB,
       GL_SIGNED_NORMALIZED,
       16, 16, 16, 0,
       0, 0, 0, 0, 0,
@@ -1047,7 +1047,7 @@ _mesa_test_formats(void)
          if (info->RedBits > 0) {
             GLuint t = info->RedBits + info->GreenBits
                + info->BlueBits + info->AlphaBits;
-            assert(t / 8 == info->BytesPerBlock);
+            assert(t / 8 <= info->BytesPerBlock);
             (void) t;
          }
       }
@@ -1055,6 +1055,7 @@ _mesa_test_formats(void)
       assert(info->DataType == GL_UNSIGNED_NORMALIZED ||
              info->DataType == GL_SIGNED_NORMALIZED ||
              info->DataType == GL_UNSIGNED_INT ||
+             info->DataType == GL_INT ||
              info->DataType == GL_FLOAT);
 
       if (info->BaseFormat == GL_RGB) {
@@ -1109,6 +1110,7 @@ _mesa_format_to_type_and_comps(gl_format format,
    case MESA_FORMAT_ARGB8888:
    case MESA_FORMAT_ARGB8888_REV:
    case MESA_FORMAT_XRGB8888:
+   case MESA_FORMAT_XRGB8888_REV:
       *datatype = GL_UNSIGNED_BYTE;
       *comps = 4;
       return;
@@ -1135,6 +1137,11 @@ _mesa_format_to_type_and_comps(gl_format format,
       *comps = 4;
       return;
 
+   case MESA_FORMAT_RGBA5551:
+      *datatype = GL_UNSIGNED_SHORT_5_5_5_1;
+      *comps = 4;
+      return;
+
    case MESA_FORMAT_AL88:
    case MESA_FORMAT_AL88_REV:
       *datatype = GL_UNSIGNED_BYTE;
@@ -1156,6 +1163,7 @@ _mesa_format_to_type_and_comps(gl_format format,
    case MESA_FORMAT_L8:
    case MESA_FORMAT_I8:
    case MESA_FORMAT_CI8:
+   case MESA_FORMAT_S8:
       *datatype = GL_UNSIGNED_BYTE;
       *comps = 1;
       return;
@@ -1201,9 +1209,23 @@ _mesa_format_to_type_and_comps(gl_format format,
       *comps = 2;
       return;
 
+   case MESA_FORMAT_SIGNED_R8:
+      *datatype = GL_BYTE;
+      *comps = 1;
+      return;
+   case MESA_FORMAT_SIGNED_RG88:
+      *datatype = GL_BYTE;
+      *comps = 2;
+      return;
    case MESA_FORMAT_SIGNED_RGBA8888:
    case MESA_FORMAT_SIGNED_RGBA8888_REV:
+   case MESA_FORMAT_SIGNED_RGBX8888:
       *datatype = GL_BYTE;
+      *comps = 4;
+      return;
+
+   case MESA_FORMAT_RGBA_16:
+      *datatype = GL_UNSIGNED_SHORT;
       *comps = 4;
       return;
 
@@ -1331,9 +1353,14 @@ _mesa_format_to_type_and_comps(gl_format format,
       *comps = 4;
       return;
 
-
+   case MESA_FORMAT_NONE:
+   case MESA_FORMAT_COUNT:
+   /* For debug builds, warn if any formats are not handled */
+#ifndef DEBUG
    default:
-      _mesa_problem(NULL, "bad format in _mesa_format_to_type_and_comps");
+#endif
+      _mesa_problem(NULL, "bad format %s in _mesa_format_to_type_and_comps",
+                    _mesa_get_format_name(format));
       *datatype = 0;
       *comps = 1;
    }

@@ -2143,11 +2143,12 @@ struct gl_shader_program
 
    /**
     * Per-stage shaders resulting from the first stage of linking.
+    *
+    * Set of linked shaders for this program.  The array is accessed using the
+    * \c MESA_SHADER_* defines.  Entries for non-existent stages will be
+    * \c NULL.
     */
-   /*@{*/
-   GLuint _NumLinkedShaders;
-   struct gl_shader *_LinkedShaders[2];
-   /*@}*/
+   struct gl_shader *_LinkedShaders[MESA_SHADER_TYPES];
 };   
 
 
@@ -2514,6 +2515,17 @@ struct gl_framebuffer
 
 
 /**
+ * Precision info for shader datatypes.  See glGetShaderPrecisionFormat().
+ */
+struct gl_precision
+{
+   GLushort RangeMin;   /**< min value exponent */
+   GLushort RangeMax;   /**< max value exponent */
+   GLushort Precision;  /**< number of mantissa bits */
+};
+
+
+/**
  * Limits for vertex and fragment programs/shaders.
  */
 struct gl_program_constants
@@ -2547,6 +2559,9 @@ struct gl_program_constants
    GLuint MaxGeometryUniformComponents;
    GLuint MaxGeometryOutputVertices;
    GLuint MaxGeometryTotalOutputComponents;
+   /* ES 2.0 and GL_ARB_ES2_compatibility */
+   struct gl_precision LowFloat, MediumFloat, HighFloat;
+   struct gl_precision LowInt, MediumInt, HighInt;
 };
 
 
@@ -2641,6 +2656,7 @@ struct gl_constants
 struct gl_extensions
 {
    GLboolean dummy;  /* don't remove this! */
+   GLboolean ARB_ES2_compatibility;
    GLboolean ARB_blend_func_extended;
    GLboolean ARB_copy_buffer;
    GLboolean ARB_depth_buffer_float;

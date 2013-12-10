@@ -739,10 +739,12 @@ compile_instruction(
 
 /**
  * Emit the TGSI instructions to adjust the WPOS pixel center convention
+ * Basically, add (adjX, adjY) to the fragment position.
  */
 static void
 emit_adjusted_wpos( struct st_translate *t,
-                    const struct gl_program *program, GLfloat value)
+                    const struct gl_program *program,
+                    GLfloat adjX, GLfloat adjY)
 {
    struct ureg_program *ureg = t->ureg;
    struct ureg_dst wpos_temp = ureg_DECL_temporary(ureg);
@@ -752,7 +754,7 @@ emit_adjusted_wpos( struct st_translate *t,
     * The shader might also use gl_FragCoord.w and .z.
     */
    ureg_ADD(ureg, wpos_temp, wpos_input,
-            ureg_imm4f(ureg, value, value, 0.0f, 0.0f));
+            ureg_imm4f(ureg, adjX, adjY, 0.0f, 0.0f));
 
    t->inputs[t->inputMapping[FRAG_ATTRIB_WPOS]] = ureg_src(wpos_temp);
 }
@@ -760,10 +762,13 @@ emit_adjusted_wpos( struct st_translate *t,
 
 /**
  * Emit the TGSI instructions for inverting the WPOS y coordinate.
+ * This code is unavoidable because it also depends on whether
+ * a FBO is bound (STATE_FB_WPOS_Y_TRANSFORM).
  */
 static void
-emit_inverted_wpos( struct st_translate *t,
-                    const struct gl_program *program )
+emit_wpos_inversion( struct st_translate *t,
+                     const struct gl_program *program,
+                     boolean invert)
 {
    struct ureg_program *ureg = t->ureg;
 
@@ -771,17 +776,17 @@ emit_inverted_wpos( struct st_translate *t,
     * Need to replace instances of INPUT[WPOS] with temp T
     * where T = INPUT[WPOS] by y is inverted.
     */
-   static const gl_state_index winSizeState[STATE_LENGTH]
-      = { STATE_INTERNAL, STATE_FB_SIZE, 0, 0, 0 };
+   static const gl_state_index wposTransformState[STATE_LENGTH]
+      = { STATE_INTERNAL, STATE_FB_WPOS_Y_TRANSFORM, 0, 0, 0 };
    
    /* XXX: note we are modifying the incoming shader here!  Need to
     * do this before emitting the constant decls below, or this
     * will be missed:
     */
-   unsigned winHeightConst = _mesa_add_state_reference(program->Parameters,
-                                                       winSizeState);
+   unsigned wposTransConst = _mesa_add_state_reference(program->Parameters,
+                                                       wposTransformState);
 
-   struct ureg_src winsize = ureg_DECL_constant( ureg, winHeightConst );
+   struct ureg_src wpostrans = ureg_DECL_constant( ureg, wposTransConst );
    struct ureg_dst wpos_temp;
    struct ureg_src wpos_input = t->inputs[t->inputMapping[FRAG_ATTRIB_WPOS]];
 
@@ -794,12 +799,23 @@ emit_inverted_wpos( struct st_translate *t,
       ureg_MOV( ureg, wpos_temp, wpos_input );
    }
 
-   /* SUB wpos_temp.y, winsize_const, wpos_input
-    */
-   ureg_SUB( ureg,
-             ureg_writemask(wpos_temp, TGSI_WRITEMASK_Y ),
-             winsize,
-             wpos_input);
+   if (invert) {
+      /* MAD wpos_temp.y, wpos_input, wpostrans.xxxx, wpostrans.yyyy
+       */
+      ureg_MAD( ureg,
+                ureg_writemask(wpos_temp, TGSI_WRITEMASK_Y ),
+                wpos_input,
+                ureg_scalar(wpostrans, 0),
+                ureg_scalar(wpostrans, 1));
+   } else {
+      /* MAD wpos_temp.y, wpos_input, wpostrans.zzzz, wpostrans.wwww
+       */
+      ureg_MAD( ureg,
+                ureg_writemask(wpos_temp, TGSI_WRITEMASK_Y ),
+                wpos_input,
+                ureg_scalar(wpostrans, 2),
+                ureg_scalar(wpostrans, 3));
+   }
 
    /* Use wpos_temp as position input from here on:
     */
@@ -844,7 +860,7 @@ emit_wpos(struct st_context *st,
       if (pscreen->get_param(pscreen, PIPE_CAP_TGSI_FS_COORD_PIXEL_CENTER_INTEGER))
          ureg_property_fs_coord_pixel_center(ureg, TGSI_FS_COORD_PIXEL_CENTER_INTEGER);
       else if (pscreen->get_param(pscreen, PIPE_CAP_TGSI_FS_COORD_PIXEL_CENTER_HALF_INTEGER))
-         emit_adjusted_wpos(t, program, invert ? 0.5f : -0.5f);
+         emit_adjusted_wpos(t, program, 0.5f, invert ? 0.5f : -0.5f);
       else
          assert(0);
    }
@@ -853,7 +869,7 @@ emit_wpos(struct st_context *st,
       }
       else if (pscreen->get_param(pscreen, PIPE_CAP_TGSI_FS_COORD_PIXEL_CENTER_INTEGER)) {
          ureg_property_fs_coord_pixel_center(ureg, TGSI_FS_COORD_PIXEL_CENTER_INTEGER);
-         emit_adjusted_wpos(t, program, invert ? -0.5f : 0.5f);
+         emit_adjusted_wpos(t, program, 0.5f, invert ? -0.5f : 0.5f);
       }
       else
          assert(0);
@@ -861,8 +877,7 @@ emit_wpos(struct st_context *st,
 
    /* we invert after adjustment so that we avoid the MOV to temporary,
     * and reuse the adjustment ADD instead */
-   if (invert)
-      emit_inverted_wpos(t, program);
+   emit_wpos_inversion(t, program, invert);
 }
 
 

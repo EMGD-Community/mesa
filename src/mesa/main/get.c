@@ -260,6 +260,7 @@ static const int extra_EXT_fog_coord_flush_current[] = {
    EXTRA_END
 };
 
+EXTRA_EXT(ARB_ES2_compatibility);
 EXTRA_EXT(ARB_multitexture);
 EXTRA_EXT(ARB_texture_cube_map);
 EXTRA_EXT(MESA_texture_array);
@@ -288,7 +289,7 @@ EXTRA_EXT(ARB_shader_objects);
 EXTRA_EXT(EXT_provoking_vertex);
 EXTRA_EXT(ARB_fragment_shader);
 EXTRA_EXT(ARB_fragment_program);
-EXTRA_EXT(ARB_framebuffer_object);
+EXTRA_EXT2(ARB_framebuffer_object, EXT_framebuffer_multisample);
 EXTRA_EXT(EXT_framebuffer_object);
 EXTRA_EXT(APPLE_vertex_array_object);
 EXTRA_EXT(ARB_seamless_cube_map);
@@ -305,6 +306,7 @@ EXTRA_EXT2(ARB_vertex_program, NV_vertex_program);
 EXTRA_EXT2(ARB_vertex_program, ARB_fragment_program);
 EXTRA_EXT(ARB_vertex_buffer_object);
 EXTRA_EXT(ARB_geometry_shader4);
+EXTRA_EXT(ARB_copy_buffer);
 
 static const int
 extra_ARB_vertex_program_ARB_fragment_program_NV_vertex_program[] = {
@@ -454,6 +456,10 @@ static const struct value_desc values[] = {
    { GL_ELEMENT_ARRAY_BUFFER_BINDING_ARB, LOC_CUSTOM, TYPE_INT, 0,
      extra_ARB_vertex_buffer_object },
 
+   /* GL_ARB_copy_buffer */
+   { GL_COPY_READ_BUFFER, LOC_CUSTOM, TYPE_INT, 0, extra_ARB_copy_buffer },
+   { GL_COPY_WRITE_BUFFER, LOC_CUSTOM, TYPE_INT, 0, extra_ARB_copy_buffer },
+
    /* GL_OES_read_format */
    { GL_IMPLEMENTATION_COLOR_READ_TYPE_OES, LOC_CUSTOM, TYPE_INT, 0,
      extra_new_buffers_OES_read_format },
@@ -550,7 +556,7 @@ static const struct value_desc values[] = {
    { GL_VERTEX_ARRAY_SIZE, ARRAY_INT(Vertex.Size), NO_EXTRA },
    { GL_VERTEX_ARRAY_TYPE, ARRAY_ENUM(Vertex.Type), NO_EXTRA },
    { GL_VERTEX_ARRAY_STRIDE, ARRAY_INT(Vertex.Stride), NO_EXTRA },
-   { GL_NORMAL_ARRAY, ARRAY_ENUM(Normal.Enabled), NO_EXTRA },
+   { GL_NORMAL_ARRAY, ARRAY_BOOL(Normal.Enabled), NO_EXTRA },
    { GL_NORMAL_ARRAY_TYPE, ARRAY_ENUM(Normal.Type), NO_EXTRA },
    { GL_NORMAL_ARRAY_STRIDE, ARRAY_INT(Normal.Stride), NO_EXTRA },
    { GL_COLOR_ARRAY, ARRAY_BOOL(Color.Enabled), NO_EXTRA },
@@ -560,11 +566,20 @@ static const struct value_desc values[] = {
    { GL_TEXTURE_COORD_ARRAY,
      LOC_CUSTOM, TYPE_BOOLEAN, offsetof(struct gl_client_array, Enabled), NO_EXTRA },
    { GL_TEXTURE_COORD_ARRAY_SIZE,
-     LOC_CUSTOM, TYPE_BOOLEAN, offsetof(struct gl_client_array, Size), NO_EXTRA },
+     LOC_CUSTOM, TYPE_INT, offsetof(struct gl_client_array, Size), NO_EXTRA },
    { GL_TEXTURE_COORD_ARRAY_TYPE,
-     LOC_CUSTOM, TYPE_BOOLEAN, offsetof(struct gl_client_array, Type), NO_EXTRA },
+     LOC_CUSTOM, TYPE_ENUM, offsetof(struct gl_client_array, Type), NO_EXTRA },
    { GL_TEXTURE_COORD_ARRAY_STRIDE,
-     LOC_CUSTOM, TYPE_BOOLEAN, offsetof(struct gl_client_array, Stride), NO_EXTRA },
+     LOC_CUSTOM, TYPE_INT, offsetof(struct gl_client_array, Stride), NO_EXTRA },
+
+   /* GL_ARB_ES2_compatibility */
+   { GL_SHADER_COMPILER, CONST(1), extra_ARB_ES2_compatibility },
+   { GL_MAX_VARYING_VECTORS, CONTEXT_INT(Const.MaxVarying),
+     extra_ARB_ES2_compatibility },
+   { GL_MAX_VERTEX_UNIFORM_VECTORS, LOC_CUSTOM, TYPE_INT, 0,
+     extra_ARB_ES2_compatibility },
+   { GL_MAX_FRAGMENT_UNIFORM_VECTORS, LOC_CUSTOM, TYPE_INT, 0,
+     extra_ARB_ES2_compatibility },
 
    /* GL_ARB_multitexture */
    { GL_MAX_TEXTURE_UNITS_ARB,
@@ -685,12 +700,9 @@ static const struct value_desc values[] = {
 #if FEATURE_ES2
    /* Enums unique to OpenGL ES 2.0 */
    { 0, 0, TYPE_API_MASK, API_OPENGLES2_BIT, NO_EXTRA },
-   { GL_MAX_FRAGMENT_UNIFORM_VECTORS, LOC_CUSTOM, TYPE_INT,
-     offsetof(GLcontext, Const.FragmentProgram.MaxUniformComponents), NO_EXTRA },
-   { GL_MAX_VARYING_VECTORS, LOC_CUSTOM, TYPE_INT,
-     offsetof(GLcontext, Const.MaxVarying), NO_EXTRA },
-   { GL_MAX_VERTEX_UNIFORM_VECTORS, LOC_CUSTOM, TYPE_INT,
-     offsetof(GLcontext, Const.VertexProgram.MaxUniformComponents), NO_EXTRA },
+   { GL_MAX_FRAGMENT_UNIFORM_VECTORS, LOC_CUSTOM, TYPE_INT, 0, NO_EXTRA },
+   { GL_MAX_VARYING_VECTORS, CONTEXT_INT(Const.MaxVarying), NO_EXTRA },
+   { GL_MAX_VERTEX_UNIFORM_VECTORS, LOC_CUSTOM, TYPE_INT, 0, NO_EXTRA },
    { GL_SHADER_COMPILER, CONST(1), NO_EXTRA },
    /* OES_get_program_binary */
    { GL_NUM_SHADER_BINARY_FORMATS, CONST(0), NO_EXTRA },
@@ -1163,6 +1175,14 @@ static const struct value_desc values[] = {
      extra_valid_draw_buffer },
    { GL_DRAW_BUFFER3_ARB, BUFFER_ENUM(ColorDrawBuffer[3]),
      extra_valid_draw_buffer },
+   { GL_DRAW_BUFFER4_ARB, BUFFER_ENUM(ColorDrawBuffer[4]),
+     extra_valid_draw_buffer },
+   { GL_DRAW_BUFFER5_ARB, BUFFER_ENUM(ColorDrawBuffer[5]),
+     extra_valid_draw_buffer },
+   { GL_DRAW_BUFFER6_ARB, BUFFER_ENUM(ColorDrawBuffer[6]),
+     extra_valid_draw_buffer },
+   { GL_DRAW_BUFFER7_ARB, BUFFER_ENUM(ColorDrawBuffer[7]),
+     extra_valid_draw_buffer },
 
    /* GL_ATI_fragment_shader */
    { GL_NUM_FRAGMENT_REGISTERS_ATI, CONST(6), extra_ATI_fragment_shader },
@@ -1193,7 +1213,7 @@ static const struct value_desc values[] = {
 
    /* GL_ARB_framebuffer_object */
    { GL_MAX_SAMPLES, CONTEXT_INT(Const.MaxSamples),
-     extra_ARB_framebuffer_object },
+     extra_ARB_framebuffer_object_EXT_framebuffer_multisample },
 
    /* GL_APPLE_vertex_array_object */
    { GL_VERTEX_ARRAY_BINDING_APPLE, ARRAY_INT(Name),
@@ -1382,7 +1402,7 @@ void _mesa_init_get_hash(GLcontext *ctx)
 static void
 find_custom_value(GLcontext *ctx, const struct value_desc *d, union value *v)
 {
-   struct gl_buffer_object *buffer_obj;
+   struct gl_buffer_object **buffer_obj;
    struct gl_client_array *array;
    GLuint unit, *p;
 
@@ -1585,9 +1605,9 @@ find_custom_value(GLcontext *ctx, const struct value_desc *d, union value *v)
    case GL_EDGE_FLAG_ARRAY_BUFFER_BINDING_ARB:
    case GL_SECONDARY_COLOR_ARRAY_BUFFER_BINDING_ARB:
    case GL_FOG_COORDINATE_ARRAY_BUFFER_BINDING_ARB:
-      buffer_obj = (struct gl_buffer_object *)
+      buffer_obj = (struct gl_buffer_object **)
 	 ((char *) ctx->Array.ArrayObj + d->offset);
-      v->value_int = buffer_obj->Name;
+      v->value_int = (*buffer_obj)->Name;
       break;
    case GL_ARRAY_BUFFER_BINDING_ARB:
       v->value_int = ctx->Array.ArrayBufferObj->Name;
@@ -1598,6 +1618,14 @@ find_custom_value(GLcontext *ctx, const struct value_desc *d, union value *v)
       break;
    case GL_ELEMENT_ARRAY_BUFFER_BINDING_ARB:
       v->value_int = ctx->Array.ElementArrayBufferObj->Name;
+      break;
+
+   /* ARB_copy_buffer */
+   case GL_COPY_READ_BUFFER:
+      v->value_int = ctx->CopyReadBuffer->Name;
+      break;
+   case GL_COPY_WRITE_BUFFER:
+      v->value_int = ctx->CopyWriteBuffer->Name;
       break;
 
    case GL_FRAGMENT_PROGRAM_BINDING_NV:
@@ -1639,6 +1667,14 @@ find_custom_value(GLcontext *ctx, const struct value_desc *d, union value *v)
       break;
    case GL_POINT_SIZE_ARRAY_BUFFER_BINDING_OES:
       v->value_int = ctx->Array.ArrayObj->PointSize.BufferObj->Name;
+      break;
+
+   case GL_MAX_VERTEX_UNIFORM_VECTORS:
+      v->value_int = ctx->Const.VertexProgram.MaxUniformComponents / 4;
+      break;
+
+   case GL_MAX_FRAGMENT_UNIFORM_VECTORS:
+      v->value_int = ctx->Const.FragmentProgram.MaxUniformComponents / 4;
       break;
    }   
 }
@@ -1769,16 +1805,18 @@ find_value(const char *func, GLenum pname, void **p, union value *v)
    hash = (pname * prime_factor);
    while (1) {
       d = &values[table[hash & mask]];
-      if (likely(d->pname == pname))
-	 break;
 
       /* If the enum isn't valid, the hash walk ends with index 0,
        * which is the API mask entry at the beginning of values[]. */
-      if (d->type == TYPE_API_MASK) {
+      if (unlikely(d->type == TYPE_API_MASK)) {
 	 _mesa_error(ctx, GL_INVALID_ENUM, "%s(pname=%s)", func,
                      _mesa_lookup_enum_by_nr(pname));
 	 return &error_value;
       }
+
+      if (likely(d->pname == pname))
+	 break;
+
       hash += prime_step;
    }
 
@@ -2318,8 +2356,10 @@ void GLAPIENTRY
 _mesa_GetBooleanIndexedv( GLenum pname, GLuint index, GLboolean *params )
 {
    union value v;
+   enum value_type type =
+      find_value_indexed("glGetBooleanIndexedv", pname, index, &v);
 
-   switch (find_value_indexed("glGetBooleanIndexedv", pname, index, &v)) {
+   switch (type) {
    case TYPE_INT:
       params[0] = INT_TO_BOOLEAN(v.value_int);
       break;
@@ -2333,7 +2373,7 @@ _mesa_GetBooleanIndexedv( GLenum pname, GLuint index, GLboolean *params )
       params[0] = INT64_TO_BOOLEAN(v.value_int);
       break;
    default:
-      assert(0);
+      ; /* nothing - GL error was recorded */
    }
 }
 
@@ -2341,8 +2381,10 @@ void GLAPIENTRY
 _mesa_GetIntegerIndexedv( GLenum pname, GLuint index, GLint *params )
 {
    union value v;
+   enum value_type type =
+      find_value_indexed("glGetIntegerIndexedv", pname, index, &v);
 
-   switch (find_value_indexed("glGetIntegerIndexedv", pname, index, &v)) {
+   switch (type) {
    case TYPE_INT:
       params[0] = v.value_int;
       break;
@@ -2356,7 +2398,7 @@ _mesa_GetIntegerIndexedv( GLenum pname, GLuint index, GLint *params )
       params[0] = INT64_TO_INT(v.value_int);
       break;
    default:
-      assert(0);
+      ; /* nothing - GL error was recorded */
    }
 }
 
@@ -2365,8 +2407,10 @@ void GLAPIENTRY
 _mesa_GetInteger64Indexedv( GLenum pname, GLuint index, GLint64 *params )
 {
    union value v;
+   enum value_type type =
+      find_value_indexed("glGetIntegerIndexedv", pname, index, &v);      
 
-   switch (find_value_indexed("glGetIntegerIndexedv", pname, index, &v)) {
+   switch (type) {
    case TYPE_INT:
       params[0] = v.value_int;
       break;
@@ -2380,7 +2424,7 @@ _mesa_GetInteger64Indexedv( GLenum pname, GLuint index, GLint64 *params )
       params[0] = v.value_int;
       break;
    default:
-      assert(0);
+      ; /* nothing - GL error was recorded */
    }
 }
 #endif /* FEATURE_ARB_sync */

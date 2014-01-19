@@ -69,7 +69,7 @@ Description: A free implementation of the OpenGL API -- debugging symbols
  This package contains debugging symbols for the software rasterization GL
  library.
 
-# Package: libgl1-mesa-swx11-i686
+# Package: libgl1-mesa-7.9-swx11-i686
 # Section: libs
 # Priority: extra
 # Architecture: i386 kfreebsd-i386 hurd-i386
@@ -381,7 +381,7 @@ Description: A free implementation of the OpenGL API -- GLX runtime
  For a complete description of Mesa, please look at the
  libgl1-mesa-swx11 package.
 
-Package: libgl1-mesa-glx-7.9-dbg
+Package: libgl1-mesa-7.9-glx-dbg
 Section: debug
 Priority: extra
 Architecture: any
@@ -402,7 +402,7 @@ Description: Debugging symbols for the Mesa GLX runtime
  This package contains debugging symbols for the GL library with GLX and DRI
  capabilities.
 
-#Package: libgl1-mesa-glx-i686
+#Package: libgl1-mesa-7.9-glx-i686
 #Section: libs
 #Priority: extra
 #Architecture: i386 kfreebsd-i386 hurd-i386
@@ -632,7 +632,7 @@ Description: The OpenGL utility library -- development files
  For a complete description of GLU, please look at the libglu1-mesa
  package.
 
-# Package: libglw1-mesa
+# Package: libglw1-mesa-7.9
 # Section: libs
 # Architecture: any
 # Depends:
@@ -652,7 +652,7 @@ Description: The OpenGL utility library -- development files
 #  .
 #  On Linux, this library is also known as libGLw or libGLw.so.1.
 
-# Package: libglw1-mesa-dev
+# Package: libglw1-mesa-7.9-dev
 # Section: libdevel
 # Architecture: any
 # Depends:

@@ -67,9 +67,10 @@ else
 
   ifeq ($(DEB_HOST_ARCH_OS), linux)
 # Gallium drivers require libdrm-{nouveau,radeon}, only available on Linux
-	GALLIUM_DRIVERS += nouveau radeon r600
+	#GALLIUM_DRIVERS += nouveau
+	GALLIUM_DRIVERS += radeon r600
 # Classic nouveau driver also requires libdrm-nouveau, only on Linux
-	DRI_DRIVERS += nouveau
+	#DRI_DRIVERS += nouveau
 # Although the KMS egl drivers will probably build on kfreebsd & hurd
 # only linux actually has KMS drivers implemented at this point.
 	EGL_DISPLAYS += drm
@@ -272,7 +273,7 @@ binary-arch: install
 	dh_testdir
 	dh_testroot
 	dh_installchangelogs -s
-	dh_installchangelogs -pmesa-common-dev
+	dh_installchangelogs -pmesa-7.9-common-dev
 	dh_installdocs -s
 	dh_installexamples -s
 
@@ -285,34 +286,34 @@ binary-arch: install
 
 	# Create an ld.so.conf which says where to find libGL from Mesa
 	echo "/usr/lib/mesa" \
-	> $(CURDIR)/debian/libgl1-mesa-glx/usr/lib/mesa/ld.so.conf
+	> $(CURDIR)/debian/libgl1-mesa-7.9-glx/usr/lib/mesa/ld.so.conf
 	echo "/usr/lib/mesa" \
-	> $(CURDIR)/debian/libgl1-mesa-swx11/usr/lib/mesa/ld.so.conf
+	> $(CURDIR)/debian/libgl1-mesa-7.9-swx11/usr/lib/mesa/ld.so.conf
 
 ifeq ($(DEB_BUILD_ARCH),amd64)
 	# Add the path to 32bit libGL from Mesa (on 64 bit)
 	echo "/usr/lib32/mesa" \
-	>> $(CURDIR)/debian/libgl1-mesa-glx/usr/lib/mesa/ld.so.conf
+	>> $(CURDIR)/debian/libgl1-mesa-7.9-glx/usr/lib/mesa/ld.so.conf
 	echo "/usr/lib32/mesa" \
-	>> $(CURDIR)/debian/libgl1-mesa-swx11/usr/lib/mesa/ld.so.conf
+	>> $(CURDIR)/debian/libgl1-mesa-7.9-swx11/usr/lib/mesa/ld.so.conf
 endif
 
 	# Empty directory for the alternative
-	mkdir -p $(CURDIR)/debian/libgl1-mesa-glx/usr/lib/xorg/x11-extra-modules
-	mkdir -p $(CURDIR)/debian/libgl1-mesa-swx11/usr/lib/xorg/x11-extra-modules
+	mkdir -p $(CURDIR)/debian/libgl1-mesa-7.9-glx/usr/lib/xorg/x11-extra-modules
+	mkdir -p $(CURDIR)/debian/libgl1-mesa-7.9-swx11/usr/lib/xorg/x11-extra-modules
 
 	dh_installman -s
 	dh_lintian -s
 	dh_link -s
-	dh_strip -plibgl1-mesa-swx11 --dbg-package=libgl1-mesa-swx11-dbg
-	dh_strip -plibgl1-mesa-glx --dbg-package=libgl1-mesa-glx-dbg
-	dh_strip -plibgl1-mesa-dri --dbg-package=libgl1-mesa-dri-dbg
-	dh_strip -plibgl1-mesa-dri-experimental --dbg-package=libgl1-mesa-dri-experimental-dbg
-	dh_strip -plibopenvg1-mesa --dbg-package=libopenvg1-mesa-dbg
-	dh_strip -plibegl1-mesa --dbg-package=libegl1-mesa-dbg
-	dh_strip -plibgles1-mesa --dbg-package=libgles1-mesa-dbg
-	dh_strip -plibgles2-mesa --dbg-package=libgles2-mesa-dbg	
-	dh_strip -plibegl1-mesa-drivers --dbg-package=libegl1-mesa-drivers-dbg
+	dh_strip -plibgl1-mesa-7.9-swx11 --dbg-package=libgl1-mesa-7.9-swx11-dbg
+	dh_strip -plibgl1-mesa-7.9-glx --dbg-package=libgl1-mesa-7.9-glx-dbg
+	dh_strip -plibgl1-mesa-7.9-dri --dbg-package=libgl1-mesa-7.9-dri-dbg
+	dh_strip -plibgl1-mesa-7.9-dri-experimental --dbg-package=libgl1-mesa-7.9-dri-experimental-dbg
+	dh_strip -plibopenvg1-mesa-7.9 --dbg-package=libopenvg1-mesa-7.9-dbg
+	dh_strip -plibegl1-mesa-7.9 --dbg-package=libegl1-mesa-7.9-dbg
+	dh_strip -plibgles1-mesa-7.9 --dbg-package=libgles1-mesa-7.9-dbg
+	dh_strip -plibgles2-mesa-7.9 --dbg-package=libgles2-mesa-7.9-dbg	
+	dh_strip -plibegl1-mesa-7.9-drivers --dbg-package=libegl1-mesa-7.9-drivers-dbg
 	dh_strip -s --remaining-packages
 	dh_compress -s
 	dh_fixperms -s

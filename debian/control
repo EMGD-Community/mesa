@@ -65,7 +65,7 @@ Section: debug
 Priority: extra
 Architecture: any
 Depends:
- libgl1-mesa-swx11 (= ${binary:Version}),
+ libgl1-mesa-7.9-swx11 (= ${binary:Version}),
  ${misc:Depends},
 Conflicts:
  libgl1-mesa-swrast-dbg,
@@ -131,9 +131,25 @@ Depends:
  libxext6,
  mesa-7.9-common-dev (= ${binary:Version}),
  ${misc:Depends},
-Provides: libgl-dev, mesag-dev, libgl1-mesa-swrast-dev
-Conflicts: mesa-dev, libgl-dev, mesag3 (<< 3.1-1), nvidia-glx-dev, mesag-dev, libgl1-mesa-swrast-dev
-Replaces: libgl-dev, mesag-dev, libgl1-mesa-swrast-dev
+Provides:
+ libgl-dev,
+ mesag-dev,
+ libgl1-mesa-swrast-dev,
+ libgl1-mesa-swx11-dev
+Conflicts:
+ mesa-dev,
+ libgl-dev,
+ mesag3 (<< 3.1-1),
+ nvidia-glx-dev,
+ mesag-dev,
+ libgl1-mesa-swrast-dev
+Replaces:
+ libgl-dev,
+ mesag-dev,
+ libgl1-mesa-swrast-dev,
+ libgl1-mesa-swx11-dev
+Breaks:
+ libgl1-mesa-swx11-dev
 Description: A free implementation of the OpenGL API -- development files
  This package provides the development environment required for
  compiling programs with Mesa.  For a complete description of Mesa,
@@ -508,7 +524,7 @@ Section: debug
 Priority: extra
 Architecture: any
 Depends:
- libgl1-mesa-dri (= ${binary:Version}),
+ libgl1-mesa-7.9-dri (= ${binary:Version}),
  ${misc:Depends},
 Provides:
  libgl1-mesa-dri-dbg
@@ -563,7 +579,7 @@ Depends:
  ${misc:Depends},
 Provides:
  libgl1-mesa-dri-experimental-dbg
-Depends:
+Provides:
  libgl1-mesa-dri-experimental-dbg
 Breaks:
  libgl1-mesa-dri-experimental-dbg
@@ -605,8 +621,8 @@ Package: libgl1-mesa-7.9-dev
 Section: libdevel
 Architecture: any
 Depends:
- mesa-common-dev (= ${binary:Version}),
- libgl1-mesa-glx (= ${binary:Version}),
+ mesa-7.9-common-dev (= ${binary:Version}),
+ libgl1-mesa-7.9-glx (= ${binary:Version}),
  libxext-dev, 
  ${misc:Depends},
 Conflicts:
@@ -636,7 +652,11 @@ Description: A free implementation of the OpenGL API -- GLX development files
 Package: mesa-7.9-common-dev
 Section: libdevel
 Architecture: any
-Replaces: xlibmesa-gl-dev (<< 1:7), xlibosmesa-dev, libgl1-mesa-swx11-dev (<< 6.5.2), libgl1-mesa-dev (<< 7.5~rc4-2),
+Replaces:
+ xlibmesa-gl-dev (<< 1:7),
+ xlibosmesa-dev, 
+ libgl1-mesa-swx11-dev (<< 6.5.2), 
+ libgl1-mesa-dev (<< 7.5~rc4-2),
  mesa-common-dev
 Breaks:
  mesa-common-dev

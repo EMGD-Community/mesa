@@ -425,7 +425,8 @@ Replaces:
  libgl1,
  libgl1-mesa-glx
 Provides:
- libgl1
+ libgl1,
+ libgl1-mesa-glx
 Breaks:
  libgl1-mesa-glx
 Description: A free implementation of the OpenGL API -- GLX runtime

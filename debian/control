@@ -497,6 +497,8 @@ Depends:
  ${misc:Depends}
 Suggests:
  libglide3
+Provides:
+ libgl1-mesa-dri
 Conflicts:
  xlibmesa-dri (<< 1:7.0.0),
  libgl1-mesa-dri
@@ -556,6 +558,8 @@ Provides:
  libgl1-mesa-dri-experimental
 Replaces:
  libgl1-mesa-dri-experimental
+Conflicts:
+ libgl1-mesa-dri-experimental
 Breaks:
  libgl1-mesa-dri-experimental
 Description: A free implementation of the OpenGL API -- Extra DRI modules
@@ -581,6 +585,8 @@ Depends:
 Provides:
  libgl1-mesa-dri-experimental-dbg
 Replaces:
+ libgl1-mesa-dri-experimental-dbg
+Conflicts:
  libgl1-mesa-dri-experimental-dbg
 Breaks:
  libgl1-mesa-dri-experimental-dbg
@@ -628,7 +634,8 @@ Depends:
  ${misc:Depends},
 Conflicts:
  libgl-dev,
- libgl1-mesa-dri-dev
+ libgl1-mesa-dri-dev,
+ libgl1-mesa-dev
 Replaces:
  libgl-dev,
  libgl1-mesa-dri-dev,
@@ -657,15 +664,17 @@ Depends:
  libx11-dev,
  libdrm-dev,
  ${misc:Depends},
+Provides:
+ mesa-common-dev
 Replaces:
  xlibmesa-gl-dev (<< 1:7),
  xlibosmesa-dev, 
  libgl1-mesa-swx11-dev (<< 6.5.2), 
  libgl1-mesa-dev (<< 7.5~rc4-2),
  mesa-common-dev
-Breaks:
+Conflicts:
  mesa-common-dev
-Provides:
+Breaks:
  mesa-common-dev
 Description: Developer documentation for Mesa
  This package includes the specifications for the Mesa-specific OpenGL
@@ -682,6 +691,8 @@ Replaces:
  libgl1-mesa-swx11 (<< 6.5.2),
  libosmesa6
 Provides:
+ libosmesa6
+Conflicts:
  libosmesa6
 Breaks:
  libosmesa6

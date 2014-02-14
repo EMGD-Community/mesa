@@ -22,7 +22,7 @@ Section: libs
 Priority: extra
 Architecture: any
 Depends:
- libosmesa6 (>= 6.5.2-1),
+ libosmesa6-7.9 (>= 6.5.2-1),
  ${shlibs:Depends},
  ${misc:Depends},
 Conflicts:
@@ -166,7 +166,7 @@ Depends:
  ${shlibs:Depends},
  ${misc:Depends},
 Recommends:
- libegl1-mesa-drivers
+ libegl1-mesa-7.9-drivers
 Provides:
  libegl1-x11,
  libegl1-mesa

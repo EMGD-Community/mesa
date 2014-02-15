@@ -50,9 +50,11 @@ QUILT_STAMPFN = $(STAMP_DIR)/patch
 include /usr/share/quilt/quilt.make
 
 confflags-common = \
-	--disable-glu \
-	--disable-glut \
-	--disable-glw \
+	--enable-selinux \
+	--enable-glu \
+	--enable-glut \
+	--enable-glw \
+	--enable-motif \
 	CFLAGS="$(CFLAGS)"
 
 DRI_DRIVERS = swrast
@@ -67,8 +69,7 @@ else
 
   ifeq ($(DEB_HOST_ARCH_OS), linux)
 # Gallium drivers require libdrm-{nouveau,radeon}, only available on Linux
-	#GALLIUM_DRIVERS += nouveau
-	GALLIUM_DRIVERS += radeon r600
+	#GALLIUM_DRIVERS += nouveau radeon r600
 # Classic nouveau driver also requires libdrm-nouveau, only on Linux
 	#DRI_DRIVERS += nouveau
 # Although the KMS egl drivers will probably build on kfreebsd & hurd
@@ -77,16 +78,16 @@ else
   endif
 
   ifeq ($(DEB_HOST_ARCH), lpia)
-	DRI_DRIVERS += i915 i965
-	GALLIUM_DRIVERS += i915
+	#DRI_DRIVERS += i915 i965
+	#GALLIUM_DRIVERS += i915
   else ifneq ($(DEB_HOST_ARCH), s390)
-	DRI_DRIVERS += mga r128 r200 r300 r600 radeon savage tdfx
+	#DRI_DRIVERS += mga r128 r200 r300 r600 radeon savage tdfx
     ifeq ($(DEB_HOST_ARCH_CPU), i386)
-	DRI_DRIVERS += i810 i915 i965 sis unichrome
-	GALLIUM_DRIVERS += i915
+	#DRI_DRIVERS += i810 i915 i965 sis unichrome
+	#GALLIUM_DRIVERS += i915
     else ifeq ($(DEB_HOST_ARCH_CPU), amd64)
-	DRI_DRIVERS += i915 i965 sis unichrome
-	GALLIUM_DRIVERS += i915
+	#DRI_DRIVERS += i915 i965 sis unichrome
+	#GALLIUM_DRIVERS += i915
     endif
   endif
 endif
@@ -96,6 +97,7 @@ confflags-dri = \
 	--with-dri-drivers="$(DRI_DRIVERS)" \
 	--with-dri-driverdir=/usr/lib/dri \
 	--with-egl-platforms="$(EGL_DISPLAYS)" \
+	--enable-xcb \
 	--enable-glx-tls \
 	$(addprefix --enable-gallium-,$(GALLIUM_DRIVERS)) \
 	--with-state-trackers=egl,glx,dri,vega \

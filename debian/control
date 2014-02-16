@@ -6,7 +6,7 @@ XSBC-Original-Maintainer: Debian X Strike Force <debian-x@lists.debian.org>
 Uploaders: Cyril Brulebois <kibi@debian.org>
 Standards-Version: 3.8.4
 Build-Depends:
- debhelper (>= 8.1.3),
+ debhelper (>= 8.1.3), dh-autoreconf,
  quilt (>= 0.40),
  pkg-config,
  libdrm-dev (>= 2.4.34) [!hurd-any],

@@ -1,3 +1,9 @@
+mesa (8.1.0-tizen1.0) stable; urgency=low
+
+  * Using source from Tizen 1.0 IVI
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Tue, 18 Jun 2013 15:22:44 -0400
+
 mesa (8.0.4-0ubuntu0.6) precise-security; urgency=low
 
   * SECURITY UPDATE: denial of service and possible code execution via

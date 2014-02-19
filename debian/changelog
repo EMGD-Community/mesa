@@ -1,4 +1,4 @@
-mesa (8.1.0-tizen1.0) stable; urgency=low
+mesa-8.1 (8.1.0-tizen1.0) stable; urgency=low
 
   * Using source from Tizen 1.0 IVI
 

@@ -1,1 +1,3 @@
-dri/usr/lib/${DEB_HOST_MULTIARCH}/libEGL.so.1* usr/lib/${DEB_HOST_MULTIARCH}/mesa-egl
+#dri/usr/lib/${DEB_HOST_MULTIARCH}/libEGL.so.1* usr/lib/${DEB_HOST_MULTIARCH}/mesa-egl
+
+usr/lib/*/libEGL.so.1*

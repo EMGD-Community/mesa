@@ -1,23 +1,37 @@
 #!/usr/bin/make -f
+
+DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
+
 %:
 	dh $@ --buildsystem=autoconf --with autoreconf --parallel
 
 override_dh_auto_configure:
-	dh_auto_configure -- --enable-gles1 \
+	dh_auto_configure -- --enable-opengl\
+                             --enable-gles1 \
                              --enable-gles2 \
+                             --enable-egl \
                              --with-egl-platforms=drm,x11 \
                              --enable-gbm \
                              --enable-gallium-gbm \
                              --enable-gallium-llvm \
                              --enable-glx-tls \
                              --enable-shared-glapi \
+                             --enable-shared-dricore
                              --enable-driglx-direct \
                              --with-dri-drivers=swrast \
+                             --with-dri-driverdir=/usr/lib/$(DEB_HOST_MULTIARCH)/dri \
                              --with-gallium-drivers=swrast \
-                             --disable-openvg \
-                             --disable-gallium-egl \
-                             --disable-gallium-g3dvl
+                             --enable-texture-float \
+                             --enable-openvg \
+                             --enable-gallium-egl \
+                             --enable-gallium-g3dvl \
+                             --enable-osmesa \
+                             --enable-xa \
+                             --enable-static \
+                             --enable-shared
 
+override_dh_install:
+	dh_install --fail-missing
                              
 override_dh_auto_test:
 	echo "Skipping tests.."

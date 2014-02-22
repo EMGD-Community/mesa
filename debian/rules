@@ -51,9 +51,9 @@ include /usr/share/quilt/quilt.make
 
 confflags-common = \
 	--enable-selinux \
-	--enable-glu \
-	--enable-glut \
-	--enable-glw \
+    --disable-glu \
+	--disable-glut \
+	--disable-glw \
 	--enable-motif \
 	CFLAGS="$(CFLAGS)"
 
@@ -324,7 +324,7 @@ endif
 	dh_shlibdeps -s -l/usr/lib/mesa
 	dh_gencontrol -s
 	dh_md5sums -s
-	dh_builddeb -s -- -Zlzma
+	dh_builddeb -s
 
 binary: binary-indep binary-arch
 .PHONY: configs build clean binary-indep binary-arch binary install

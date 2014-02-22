@@ -45,8 +45,6 @@ _mesa_glsl_lex(YYSTYPE *val, YYLTYPE *loc, _mesa_glsl_parse_state *state)
 }
 %}
 
-%expect 0
-
 %pure-parser
 %error-verbose
 
@@ -61,6 +59,12 @@ _mesa_glsl_lex(YYSTYPE *val, YYLTYPE *loc, _mesa_glsl_parse_state *state)
 
 %lex-param   {struct _mesa_glsl_parse_state *state}
 %parse-param {struct _mesa_glsl_parse_state *state}
+
+/* C grammar has 1 unavoidable shift/reduce conflict, (the dangling-
+* else ambiguity), which bison correctly resolves by preferring
+* to shift.
+*/
+%expect 1
 
 %union {
    int n;

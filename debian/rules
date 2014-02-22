@@ -51,7 +51,7 @@ include /usr/share/quilt/quilt.make
 
 confflags-common = \
 	--enable-selinux \
-    --disable-glu \
+        --disable-glu \
 	--disable-glut \
 	--disable-glw \
 	--enable-motif \

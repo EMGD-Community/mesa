@@ -1,4 +1,0 @@
-usr/lib/*/libGL.so
-usr/lib/*/libglapi.so
-usr/lib/*/libdricore8.1.0.so
-usr/lib/*/pkgconfig/gl.pc

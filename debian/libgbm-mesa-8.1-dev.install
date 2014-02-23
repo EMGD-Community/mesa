@@ -1,7 +1,0 @@
-#dri/usr/lib/${DEB_HOST_MULTIARCH}/libgbm.so usr/lib/${DEB_HOST_MULTIARCH}
-#dri/usr/lib/${DEB_HOST_MULTIARCH}/pkgconfig/gbm.pc usr/lib/${DEB_HOST_MULTIARCH}/pkgconfig
-#dri/usr/include/gbm.h usr/include
-
-usr/lib/*/libgbm.so
-usr/lib/*/pkgconfig/gbm.pc
-usr/include/gbm.h

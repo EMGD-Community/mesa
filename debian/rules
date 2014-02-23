@@ -50,7 +50,7 @@ QUILT_STAMPFN = $(STAMP_DIR)/patch
 include /usr/share/quilt/quilt.make
 
 confflags-common = \
-	--enable-selinux \
+	--disable-selinux \
         --disable-glu \
 	--disable-glut \
 	--disable-glw \

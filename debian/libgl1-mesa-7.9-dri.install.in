@@ -1,0 +1,5 @@
+build/dri/lib/${DEB_HOST_MULTIARCH}/*_dri.so  usr/lib/${DEB_HOST_MULTIARCH}/dri
+#build/dri/lib/${DEB_HOST_MULTIARCH}/gallium/r300_dri.so usr/lib/${DEB_HOST_MULTIARCH}/dri
+#build/dri/lib/${DEB_HOST_MULTIARCH}/gallium/r600g_dri.so usr/lib/${DEB_HOST_MULTIARCH}/dri
+#build/dri/lib/${DEB_HOST_MULTIARCH}/libglsl.so usr/lib/${DEB_HOST_MULTIARCH}/dri
+#build/dri/lib/${DEB_HOST_MULTIARCH}/libdricore.so usr/lib/${DEB_HOST_MULTIARCH}/dri

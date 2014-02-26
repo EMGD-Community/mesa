@@ -16,17 +16,18 @@ ifneq (,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
 	MAKEFLAGS += -j$(NUMJOBS)
 endif
 
+DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
 DEB_BUILD_ARCH     ?= $(shell dpkg-architecture -qDEB_BUILD_ARCH)
-DEB_HOST_ARCH     ?= $(shell dpkg-architecture -qDEB_HOST_ARCH)
-DEB_HOST_ARCH_OS     ?= $(shell dpkg-architecture -qDEB_HOST_ARCH_OS)
+DEB_HOST_ARCH      ?= $(shell dpkg-architecture -qDEB_HOST_ARCH)
+DEB_HOST_ARCH_OS   ?= $(shell dpkg-architecture -qDEB_HOST_ARCH_OS)
 DEB_HOST_GNU_TYPE  ?= $(shell dpkg-architecture -qDEB_HOST_GNU_TYPE)
 DEB_BUILD_GNU_TYPE ?= $(shell dpkg-architecture -qDEB_BUILD_GNU_TYPE)
-DEB_HOST_ARCH_CPU ?= $(shell dpkg-architecture -qDEB_HOST_ARCH_CPU)
+DEB_HOST_ARCH_CPU  ?= $(shell dpkg-architecture -qDEB_HOST_ARCH_CPU)
 DEB_BUILD_DIR      ?= $(CURDIR)/build
 ifeq ($(DEB_BUILD_GNU_TYPE), $(DEB_HOST_GNU_TYPE))
-        confflags += --build=$(DEB_HOST_GNU_TYPE)
+	confflags += --build=$(DEB_HOST_GNU_TYPE)
 else
-        confflags += --build=$(DEB_BUILD_GNU_TYPE) --host=$(DEB_HOST_GNU_TYPE)
+	confflags += --build=$(DEB_BUILD_GNU_TYPE) --host=$(DEB_HOST_GNU_TYPE)
 endif
 
 # choose which configurations to build
@@ -51,7 +52,7 @@ include /usr/share/quilt/quilt.make
 
 confflags-common = \
 	--disable-selinux \
-        --disable-glu \
+    --disable-glu \
 	--disable-glut \
 	--disable-glw \
 	--enable-motif \
@@ -95,7 +96,7 @@ endif
 confflags-dri = \
 	--with-driver=dri \
 	--with-dri-drivers="$(DRI_DRIVERS)" \
-	--with-dri-driverdir=/usr/lib/dri \
+	--with-dri-driverdir=/usr/lib/$(DEB_HOST_MULTIARCH)/dri \
 	--with-egl-platforms="$(EGL_DISPLAYS)" \
 	--enable-xcb \
 	--enable-glx-tls \
@@ -180,7 +181,7 @@ confflags-swx11+glu-i386-i686 = \
 	--disable-glut \
 	--disable-egl \
 	--disable-glw \
-	--libdir=/usr/lib/i686/cmov \
+	--libdir=/usr/lib/$(DEB_HOST_MULTIARCH)/i686/cmov \
 	CFLAGS="$(CFLAGS) -march=i686"
 
 # Add /usr/lib32/dri/ on 32 bit systems so that this path is used
@@ -231,9 +232,11 @@ $(STAMP)-build-%: configure
 	mkdir -p $(DEB_BUILD_DIR)/$*
 	find $(CURDIR)/* -maxdepth 0 -not -path '$(DEB_BUILD_DIR)*' | \
 		xargs cp -rlf -t $(DEB_BUILD_DIR)/$*
+
 	cd $(DEB_BUILD_DIR)/$* && \
 	../../configure --prefix=/usr --mandir=\$${prefix}/share/man \
 	             --infodir=\$${prefix}/share/info --sysconfdir=/etc \
+	             --libdir=\$${prefix}/lib/$(DEB_HOST_MULTIARCH) \
 	             --localstatedir=/var $(confflags) $(confflags-$*)
 	cd $(DEB_BUILD_DIR)/$* && $(MAKE)
 	>$@
@@ -248,12 +251,17 @@ install: build
 		$(MAKE) -C $(DEB_BUILD_DIR)/$$config DESTDIR=$(CURDIR)/debian/tmp install; \
 	done
 	$(MAKE) -C $(DEB_BUILD_DIR)/dri DESTDIR=$(CURDIR)/debian/tmp/dri install
+	for file in debian/*.in; \
+	do \
+		sed -e"s,\$${DEB_HOST_MULTIARCH},$(DEB_HOST_MULTIARCH),g" \
+			$${file} > $${file%%.in}; \
+	done
 
 clean: unpatch
 	dh_testdir
 	dh_testroot
 	rm -rf .pc
-	
+
 	rm -f config.cache config.log config.status
 	rm -f */config.cache */config.log */config.status
 	rm -f conftest* */conftest*
@@ -282,7 +290,7 @@ binary-arch: install
 	# Classic DRI and Gallium DRI are mixed up together here
 	# Remove the whole tree to avoid false-positives in --list-missing, and
 	# install the right files manually.
-	rm -r debian/tmp/dri/usr/lib/dri
+	rm -r debian/tmp/dri/usr/lib/$(DEB_HOST_MULTIARCH)/dri
 
 	dh_install -s --list-missing
 
@@ -292,17 +300,20 @@ binary-arch: install
 	echo "/usr/lib/mesa" \
 	> $(CURDIR)/debian/libgl1-mesa-7.9-swx11/usr/lib/mesa/ld.so.conf
 
-ifeq ($(DEB_BUILD_ARCH),amd64)
-	# Add the path to 32bit libGL from Mesa (on 64 bit)
-	echo "/usr/lib32/mesa" \
-	>> $(CURDIR)/debian/libgl1-mesa-7.9-glx/usr/lib/mesa/ld.so.conf
-	echo "/usr/lib32/mesa" \
-	>> $(CURDIR)/debian/libgl1-mesa-7.9-swx11/usr/lib/mesa/ld.so.conf
-endif
+	# Create an ld.so.conf which says where to find libGL from Mesa
+	echo "/usr/lib/$(DEB_HOST_MULTIARCH)/mesa" \
+	> $(CURDIR)/debian/libgl1-mesa-7.9-glx/usr/lib/$(DEB_HOST_MULTIARCH)/mesa/ld.so.conf
+	echo "/usr/lib/$(DEB_HOST_MULTIARCH)/mesa" \
+	> $(CURDIR)/debian/libgl1-mesa-7.9-swx11/usr/lib/$(DEB_HOST_MULTIARCH)/mesa/ld.so.conf
 
 	# Empty directory for the alternative
 	mkdir -p $(CURDIR)/debian/libgl1-mesa-7.9-glx/usr/lib/xorg/x11-extra-modules
 	mkdir -p $(CURDIR)/debian/libgl1-mesa-7.9-swx11/usr/lib/xorg/x11-extra-modules
+
+	# Create an ld.so.conf which says where to find libEGL, libGLES{1,2} 
+	# and libOpenVG from Mesa.
+	echo "/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-egl" \
+	> $(CURDIR)/debian/libegl1-mesa-7.9/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-egl/ld.so.conf
 
 	dh_installman -s
 	dh_lintian -s

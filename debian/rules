@@ -295,12 +295,6 @@ binary-arch: install
 	dh_install -s --list-missing
 
 	# Create an ld.so.conf which says where to find libGL from Mesa
-	echo "/usr/lib/mesa" \
-	> $(CURDIR)/debian/libgl1-mesa-7.9-glx/usr/lib/mesa/ld.so.conf
-	echo "/usr/lib/mesa" \
-	> $(CURDIR)/debian/libgl1-mesa-7.9-swx11/usr/lib/mesa/ld.so.conf
-
-	# Create an ld.so.conf which says where to find libGL from Mesa
 	echo "/usr/lib/$(DEB_HOST_MULTIARCH)/mesa" \
 	> $(CURDIR)/debian/libgl1-mesa-7.9-glx/usr/lib/$(DEB_HOST_MULTIARCH)/mesa/ld.so.conf
 	echo "/usr/lib/$(DEB_HOST_MULTIARCH)/mesa" \
@@ -330,9 +324,21 @@ binary-arch: install
 	dh_strip -s --remaining-packages
 	dh_compress -s
 	dh_fixperms -s
-	dh_makeshlibs -s
+	##
+	# Resolve EGL/GLES/OpenVG symbols in the private library path.
+	# Because there's no packaging problem so onerous that accomodating
+	# proprietary alternatives can't make more difficult…
+	set -e ; for PACKAGE in \
+		libegl1-mesa-7.9 libgles1-mesa-7.9 libgles2-mesa-7.9 libopenvg1-mesa-7.9 ; do \
+			dh_makeshlibs -p$$PACKAGE -- -c4 \
+			-edebian/$$PACKAGE/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-egl/\* \
+		; done
+
+	dh_makeshlibs -s --remaining-packages -- -c4
+	##
 	dh_installdeb -s
-	dh_shlibdeps -s -l/usr/lib/mesa
+	dh_shlibdeps -s -l/usr/lib/$(DEB_HOST_MULTIARCH)/mesa:\
+/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-egl
 	dh_gencontrol -s
 	dh_md5sums -s
 	dh_builddeb -s

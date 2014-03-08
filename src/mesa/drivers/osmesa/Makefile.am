@@ -38,7 +38,7 @@ lib_LTLIBRARIES = lib@OSMESA_LIB@.la
 nodist_EXTRA_lib@OSMESA_LIB@_la_SOURCES = dummy.cpp
 lib@OSMESA_LIB@_la_SOURCES = osmesa.c
 
-lib@OSMESA_LIB@_la_LDFLAGS = -module -version-number @OSMESA_VERSION@ -no-undefined
+lib@OSMESA_LIB@_la_LDFLAGS = -module -version-number 6:5:3 -no-undefined
 
 GLAPI_LIB = $(top_builddir)/src/mapi/glapi/libglapi.la
 if HAVE_SHARED_GLAPI
@@ -56,7 +56,7 @@ if BUILD_SHARED
 all-local: lib@OSMESA_LIB@.la
 	$(MKDIR_P) $(top_builddir)/$(LIB_DIR);
 	ln -f .libs/lib@OSMESA_LIB@.so $(top_builddir)/$(LIB_DIR)/lib@OSMESA_LIB@.so;
-	ln -f .libs/lib@OSMESA_LIB@.so.@OSMESA_VERSION@ $(top_builddir)/$(LIB_DIR)/lib@OSMESA_LIB@.so.@OSMESA_VERSION@;
+	ln -f .libs/lib@OSMESA_LIB@.so.6.5.3 $(top_builddir)/$(LIB_DIR)/lib@OSMESA_LIB@.so.6.5.3;
 endif
 
 pkgconfigdir = $(libdir)/pkgconfig

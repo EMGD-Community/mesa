@@ -747,6 +747,19 @@ if test "x$enable_shared_glapi" = xyes; then
 fi
 AM_CONDITIONAL(HAVE_SHARED_GLAPI, test "x$enable_shared_glapi" = xyes)
 
+AC_ARG_ENABLE([shared-gallium],
+    [AS_HELP_STRING([--enable-shared-gallium],
+        [Enable shared gallium core @<:@default=yes@:>@])],
+    [enable_shared_gallium="$enableval"],
+    [enable_shared_gallium=yes])
+
+SHARED_GALLIUM="0"
+if test "x$enable_shared_gallium" = xyes; then
+    SHARED_GALLIUM="1"
+fi
+AC_SUBST([SHARED_GALLIUM])
+AM_CONDITIONAL(HAVE_SHARED_GALLIUM, test $SHARED_GALLIUM = 1)
+
 dnl
 dnl Driver specific build directories
 dnl
@@ -915,6 +928,8 @@ AC_SUBST([GLESv2_LIB_DEPS])
 AC_SUBST([GLESv2_PC_LIB_PRIV])
 
 DRI_LIB_DEPS="\$(top_builddir)/src/mesa/libdricore/libdricore${VERSION}.la"
+MESAGALLIUM_LIBS="${DRI_LIB_DEPS}"
+AC_SUBST([MESAGALLIUM_LIBS], ${MESAGALLIUM_LIBS})
 
 AC_SUBST([HAVE_XF86VIDMODE])
 
@@ -1028,7 +1043,7 @@ if test "x$enable_dri" = xyes; then
             ;;
         esac
         ;;
-    freebsd* | dragonfly* | *netbsd*)
+    freebsd* | dragonfly* | *netbsd* | kfreebsd*-gnu*)
         DEFINES="$DEFINES -DHAVE_PTHREAD -DUSE_EXTERNAL_DXTN_LIB=1"
         DEFINES="$DEFINES -DIN_DRI_DRIVER -DHAVE_ALIAS"
 

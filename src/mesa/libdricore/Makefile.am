@@ -42,6 +42,7 @@ libdricore@VERSION@_la_SOURCES = \
 libdricore@VERSION@_la_LDFLAGS = -version-number 1:0
 libdricore@VERSION@_la_LIBADD = \
         ../program/libdricore_program.la \
+        $(top_builddir)/src/mapi/shared-glapi/libglapi.la
         $()
 
 if HAVE_X86_ASM
@@ -65,8 +66,10 @@ AM_CPPFLAGS += \
         -I$(top_srcdir)/src/mesa/sparc
 endif
 
+lib_LTLIBRARIES =
+
 if HAVE_DRI
-lib_LTLIBRARIES = libdricore@VERSION@.la
+lib_LTLIBRARIES += libdricore@VERSION@.la
 
 # Provide compatibility with scripts for the old Mesa build system for
 # a while by putting a link to the driver into /lib of the build tree.
@@ -75,6 +78,17 @@ all-local: libdricore@VERSION@.la
 	ln -f .libs/libdricore@VERSION@.so.1.0.0 $(top_builddir)/$(LIB_DIR)/libdricore@VERSION@.so.1;
 	ln -sf libdricore@VERSION@.so.1 $(top_builddir)/$(LIB_DIR)/libdricore@VERSION@.so
 endif
+
+libmesagallium_la_SOURCES = \
+	$(STATETRACKER_FILES)
+libmesagallium_la_CFLAGS = @LLVM_CFLAGS@
+libmesagallium_la_CXXFLAGS = @LLVM_CXXFLAGS@
+libmesagallium_la_LIBADD = libdricore@VERSION@.la $(LLVM_LIBS)
+
+if HAVE_GALLIUM
+noinst_LTLIBRARIES = libmesagallium.la
+endif
+
 
 CLEANFILES = \
 	$(top_builddir)/$(LIB_DIR)/libdricore@VERSION@.so.1 \

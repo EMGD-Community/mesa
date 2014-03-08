@@ -3,14 +3,19 @@ AUTOMAKE_OPTIONS = subdir-objects
 include Makefile.sources
 include $(top_srcdir)/src/gallium/Automake.inc
 
-noinst_LTLIBRARIES = libgallium.la
-
 AM_CFLAGS = \
 	-I$(top_srcdir)/src/gallium/auxiliary/util \
-	$(GALLIUM_CFLAGS) \
-	$(VISIBILITY_CFLAGS)
+	$(GALLIUM_CFLAGS)
 
-AM_CXXFLAGS = $(VISIBILITY_CXXFLAGS)
+AM_CXXFLAGS =
+
+if HAVE_SHARED_GALLIUM
+lib_LTLIBRARIES = libgallium.la
+else
+noinst_LTLIBRARIES = libgallium.la
+AM_CFLAGS += $(VISIBILITY_CFLAGS)
+AM_CXXFLAGS += $(VISIBILITY_CXXFLAGS)
+endif
 
 libgallium_la_SOURCES = \
 	$(C_SOURCES) \
@@ -34,6 +39,8 @@ endif
 libgallium_la_SOURCES += \
 	$(GALLIVM_SOURCES) \
 	$(GALLIVM_CPP_SOURCES)
+
+libgallium_la_LIBADD = ../../mesa/libdricore/libmesagallium.la $(LLVM_LIBS) $(GALLIUM_DRI_LIB_DEPS)
 
 endif
 

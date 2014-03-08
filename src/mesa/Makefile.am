@@ -75,9 +75,6 @@ noinst_LTLIBRARIES += libmesa.la
 else
 check_LTLIBRARIES = libmesa.la
 endif
-if HAVE_GALLIUM
-noinst_LTLIBRARIES += libmesagallium.la
-endif
 
 SRCDIR = $(top_srcdir)/src/mesa/
 BUILDDIR = $(top_builddir)/src/mesa/
@@ -118,15 +115,6 @@ libmesa_la_LIBADD = \
         $(top_builddir)/src/mesa/program/libprogram.la \
         $()
 libmesa_la_LDFLAGS =
-
-libmesagallium_la_SOURCES = \
-	$(MESA_GALLIUM_FILES) \
-        $(MESA_ASM_FILES_FOR_ARCH)
-
-libmesagallium_la_LIBADD = \
-        $(top_builddir)/src/glsl/libglsl.la \
-        $(top_builddir)/src/mesa/program/libprogram.la \
-        $()
 
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = gl.pc

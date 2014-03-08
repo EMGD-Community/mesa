@@ -18,7 +18,7 @@ libgbm_la_SOURCES = \
 	main/gbm.c \
 	main/backend.c \
 	main/common.c
-libgbm_la_LDFLAGS = -version-info 1:0
+libgbm_la_LDFLAGS = -version-info 1:0 -Wl,-z,defs
 libgbm_la_LIBADD = $(LIBUDEV_LIBS) $(LIBKMS_LIBS) $(DLOPEN_LIBS)
 
 if HAVE_EGL_PLATFORM_WAYLAND
@@ -39,6 +39,8 @@ libgbm_dri_la_CFLAGS = \
 
 libgbm_la_LIBADD += \
 	libgbm_dri.la $(top_builddir)/src/mapi/shared-glapi/libglapi.la
+
+libgbm_la_LDFLAGS += $(LIBDRM_LIBS)
 endif
 
 all-local: libgbm.la

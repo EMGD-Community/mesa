@@ -173,7 +173,7 @@ brw_link_shader(struct gl_context *ctx, struct gl_shader_program *shProg)
       bool input = true;
       bool output = stage == MESA_SHADER_FRAGMENT;
       bool temp = stage == MESA_SHADER_FRAGMENT;
-      bool uniform = false;
+      bool uniform = stage == MESA_SHADER_FRAGMENT;
 
       bool lowered_variable_indexing =
          lower_variable_index_to_cond_assign(shader->ir,

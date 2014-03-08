@@ -48,7 +48,7 @@ r600_dri_la_SOURCES = \
 r600_dri_la_LDFLAGS = -module -avoid-version -shared -no-undefined
 
 r600_dri_la_LIBADD = \
-	$(top_builddir)/src/mesa/libmesagallium.la \
+	@MESAGALLIUM_LIBS@ \
 	$(top_builddir)/src/gallium/auxiliary/libgallium.la \
 	$(top_builddir)/src/gallium/drivers/r600/libr600.la \
 	$(top_builddir)/src/gallium/state_trackers/dri/drm/libdridrm.la \

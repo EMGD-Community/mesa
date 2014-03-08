@@ -49,7 +49,7 @@ radeonsi_dri_la_SOURCES = \
 radeonsi_dri_la_LDFLAGS = -module -avoid-version -shared -no-undefined
 
 radeonsi_dri_la_LIBADD = \
-	$(top_builddir)/src/mesa/libmesagallium.la \
+	@MESAGALLIUM_LIBS@ \
 	$(top_builddir)/src/gallium/auxiliary/libgallium.la \
 	$(top_builddir)/src/gallium/drivers/radeonsi/libradeonsi.la \
 	$(top_builddir)/src/gallium/state_trackers/dri/drm/libdridrm.la \

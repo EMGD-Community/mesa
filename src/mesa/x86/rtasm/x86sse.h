@@ -4,6 +4,8 @@
 
 #if defined(__i386__) || defined(__386__)
 
+#pragma GCC visibility push(internal)
+
 /* It is up to the caller to ensure that instructions issued are
  * suitable for the host cpu.  There are no checks made in this module
  * for mmx/sse/sse2 support on the cpu.
@@ -251,6 +253,8 @@ void x87_fucom( struct x86_function *p, struct x86_reg arg );
  * manipulation of ESP by other instructions.
  */
 struct x86_reg x86_fn_arg( struct x86_function *p, unsigned arg );
+
+#pragma GCC visibility pop
 
 #endif
 #endif

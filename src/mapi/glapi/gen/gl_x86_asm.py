@@ -176,7 +176,6 @@ class PrintGenericStubs(gl_XML.gl_print_base):
         print ''
         print '\t\tALIGNTEXT16'
         print '\t\tGLOBL GLNAME(gl_dispatch_functions_start)'
-        print '\t\tHIDDEN(GLNAME(gl_dispatch_functions_start))'
         print 'GLNAME(gl_dispatch_functions_start):'
         print ''
         return

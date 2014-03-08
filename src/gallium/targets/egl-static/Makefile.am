@@ -104,7 +104,7 @@ AM_CPPFLAGS += \
 	$(API_DEFINES)
 
 egl_gallium_la_LIBADD += \
-	$(top_builddir)/src/mesa/libmesagallium.la
+	@MESAGALLIUM_LIBS@
 # make st/mesa built-in when there is a single glapi provider
 if HAVE_SHARED_GLAPI
 egl_gallium_la_LIBADD += \

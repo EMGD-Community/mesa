@@ -1,0 +1,2 @@
+/usr/lib/${DEB_HOST_MULTIARCH}/mesa-egl-9.1/libEGL.so		/usr/lib/${DEB_HOST_MULTIARCH}/libEGL.so
+/usr/lib/${DEB_HOST_MULTIARCH}/mesa-egl-9.1/libwayland-egl.so	/usr/lib/${DEB_HOST_MULTIARCH}/libwayland-egl.so

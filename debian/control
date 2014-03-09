@@ -142,7 +142,7 @@ Architecture: linux-any kfreebsd-any
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
-Recommends: libegl1-mesa-drivers
+Recommends: libegl1-mesa-9.1-drivers
 Provides: libegl1-x11
 Conflicts: libegl1-x11
 Replaces: libegl1-x11
@@ -455,7 +455,7 @@ Depends:
  libglapi-mesa-9.1 (= ${binary:Version}),
  ${misc:Depends}
 Recommends:
- libgl1-mesa-dri (>= 7.2),
+ libgl1-mesa-9.1-dri (>= 7.2),
 Conflicts: libgl1, libgl1-mesa-dri (<< 6.4.0)
 Replaces: libgl1, libgl1-mesa-dri (<< 6.4.0)
 Provides: libgl1

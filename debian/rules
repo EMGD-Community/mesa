@@ -12,6 +12,15 @@ endif
 LLVM_3_1_IS_INSTALLED  := $(shell llvm-config-3.1 --version 2>/dev/null)
 LLVM_3_2_IS_INSTALLED  := $(shell llvm-config-3.2 --version 2>/dev/null)
 
+# Prefering LLVM 3.2 for Saucy and 3.1 for older releases
+ifdef LLVM_3_2_IS_INSTALLED
+USING_SPECIFIC_LLVM = ac_cv_path_LLVM_CONFIG=llvm-config-3.2
+else
+  ifdef LLVM_3_1_IS_INSTALLED
+	USING_SPECIFIC_LLVM = ac_cv_path_LLVM_CONFIG=llvm-config-3.1
+  endif
+endif
+
 DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
 DEB_HOST_ARCH      ?= $(shell dpkg-architecture -qDEB_HOST_ARCH)
 DEB_HOST_ARCH_OS   ?= $(shell dpkg-architecture -qDEB_HOST_ARCH_OS)
@@ -149,12 +158,8 @@ $(STAMP)-build-%: configure
 	             --infodir=\$${prefix}/share/info --sysconfdir=/etc \
 	             --libdir=\$${prefix}/lib/$(DEB_HOST_MULTIARCH) \
 	             --localstatedir=/var --disable-silent-rules \
-				 $(confflags) $(confflags-$*) \
-ifdef LLVM_3_2_IS_INSTALLED
-	             ac_cv_path_LLVM_CONFIG=llvm-config-3.2
-ifdef LLVM_3_1_IS_INSTALLED
-	             ac_cv_path_LLVM_CONFIG=llvm-config-3.1
-endif
+	             $(confflags) $(confflags-$*) \
+	             $(USING_SPECIFIC_LLVM)
 	
 	cd $(DEB_BUILD_DIR)/$* && $(MAKE) $(if $(NUMJOBS),-j$(NUMJOBS))
 

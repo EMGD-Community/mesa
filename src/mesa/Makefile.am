@@ -42,7 +42,7 @@ main/git_sha1.h: main/git_sha1.h.tmp
 	fi
 
 # include glapi_gen.mk for generating glapi headers for GLES
-TOP = $(top_srcdir)
+TOP = $(top_builddir)
 GLAPI = $(TOP)/src/mapi/glapi/gen
 include $(GLAPI)/glapi_gen.mk
 
@@ -98,7 +98,7 @@ noinst_LTLIBRARIES = libmesa.la libmesagallium.la
 SRCDIR = $(top_srcdir)/src/mesa/
 include sources.mak
 
-AM_CPPFLAGS = $(API_DEFINES) $(DEFINES) $(INCLUDE_DIRS)
+AM_CPPFLAGS = $(API_DEFINES) $(DEFINES) $(INCLUDE_DIRS) -I$(top_builddir)/src/mesa/main/
 AM_CFLAGS = $(LLVM_CFLAGS)
 AM_CXXFLAGS = $(LLVM_CFLAGS)
 

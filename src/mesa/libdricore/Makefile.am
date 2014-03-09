@@ -19,7 +19,7 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 # IN THE SOFTWARE.
 
-TOP=$(top_srcdir)
+TOP=$(top_builddir)
 SRCDIR = $(srcdir)/../
 include ../sources.mak
 GLSL_SRCDIR = $(srcdir)/../../glsl
@@ -30,7 +30,8 @@ noinst_PROGRAMS =
 AM_CPPFLAGS = \
 	$(INCLUDE_DIRS) \
 	$(API_DEFINES) \
-	$(DEFINES)
+	$(DEFINES) \
+    -I$(top_builddir)/src/mesa/main/
 
 AM_CFLAGS = $(CFLAGS_NOVISIBILITY) -DUSE_DRICORE
 AM_CXXFLAGS = $(CXXFLAGS_NOVISIBILITY) -DUSE_DRICORE

@@ -39,13 +39,19 @@ Homepage: http://mesa3d.sourceforge.net/
 
 Package: libxatracker1-mesa-9.1
 Section: libs
-Architecture: linux-any 
+Architecture: linux-any
+Multi-Arch: same 
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
 Pre-Depends: ${misc:Pre-Depends},
   dpkg (>= 1.15.6~),
-Multi-Arch: same
+Provides:
+ libxatracker1,
+Conflicts:
+ libxatracker1,
+Replaces:
+ libxatracker1,
 Description: X acceleration library -- runtime
  This package contains the XA (X acceleration) library.  It is used exclusively
  by the X server to do render, copy and video acceleration.
@@ -62,6 +68,12 @@ Depends:
 Pre-Depends: ${misc:Pre-Depends},
  dpkg (>= 1.15.6~),
 Multi-Arch: same
+Provides:
+ libxatracker1-dbg,
+Conflicts:
+ libxatracker1-dbg,
+Replaces:
+ libxatracker1-dbg,
 Description: X acceleration library -- debugging symbols
  This package contains the XA (X acceleration) library.  It is used exclusively
  by the X server to do render, copy and video acceleration.
@@ -77,6 +89,12 @@ Pre-Depends: dpkg (>= 1.15.6~),
 Depends:
  libxatracker1-mesa-9.1 (= ${binary:Version}),
  ${misc:Depends},
+Provides:
+ libxatracker-dev,
+Conflicts:
+ libxatracker-dev,
+Replaces:
+ libxatracker-dev,
 Description: X acceleration library -- development files
  This package contains the XA (X acceleration) library.  It is used exclusively
  by the X server to do render, copy and video acceleration.
@@ -95,6 +113,12 @@ Depends:
 Pre-Depends: ${misc:Pre-Depends},
  dpkg (>= 1.15.6~),
 Multi-Arch: same
+Provides:
+ libgbm1,
+Conflicts:
+ libgbm1,
+Replaces:
+ libgbm1,
 Description: generic buffer management API -- runtime
  This package contains the GBM buffer management library.  It provides a
  mechanism for allocating buffers for graphics rendering tied to Mesa.
@@ -111,6 +135,12 @@ Depends:
 Pre-Depends: ${misc:Pre-Depends},
  dpkg (>= 1.15.6~),
 Multi-Arch: same
+Provides:
+ libgbm1-dbg,
+Conflicts:
+ libgbm1-dbg,
+Replaces:
+ libgbm1-dbg,
 Description: generic buffer management API -- debugging symbols
  This package contains the GBM buffer management library.  It provides a
  mechanism for allocating buffers for graphics rendering tied to Mesa.
@@ -127,6 +157,12 @@ Depends:
  libgbm1-mesa-9.1 (= ${binary:Version}),
  libudev-dev,
  ${misc:Depends},
+Provides:
+ libgbm1-dev,
+Conflicts:
+ libgbm1-dev,
+Replaces:
+ libgbm1-dev,
 Description: generic buffer management API -- development files
  This package contains the GBM buffer management library.  It provides a
  mechanism for allocating buffers for graphics rendering tied to Mesa.
@@ -142,11 +178,17 @@ Architecture: linux-any kfreebsd-any
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
-Recommends: libegl1-mesa-9.1-drivers
-Provides: libegl1-x11
-Conflicts: libegl1-x11
-Replaces: libegl1-x11
-Pre-Depends: ${misc:Pre-Depends},
+Recommends:
+ libegl1-mesa-9.1-drivers,
+Provides:
+ libegl1-mesa,
+ libegl1-x11,
+Conflicts:
+ libegl1-x11,
+Replaces:
+ libegl1-x11,
+Pre-Depends:
+ ${misc:Pre-Depends},
  dpkg (>= 1.15.6~),
 Multi-Arch: same
 Description: free implementation of the EGL API -- runtime
@@ -162,11 +204,18 @@ Package: libegl1-mesa-9.1-dbg
 Section: debug
 Priority: extra
 Architecture: linux-any kfreebsd-any
-Pre-Depends: dpkg (>= 1.15.6~)
+Pre-Depends:
+ dpkg (>= 1.15.6~),
 Depends:
  libegl1-mesa-9.1 (= ${binary:Version}),
  ${misc:Depends},
 Multi-Arch: same
+Provides:
+ libegl1-mesa-dbg,
+Conflicts:
+ libegl1-mesa-dbg,
+Replaces:
+ libegl1-mesa-dbg,
 Description: free implementation of the EGL API -- debugging symbols
  This package contains the EGL native platform graphics interface library.
  EGL provides a platform-agnostic mechanism for creating rendering surfaces
@@ -193,6 +242,12 @@ Depends:
  libxcb-dri2-0-dev,
  libx11-xcb-dev,
  ${misc:Depends},
+Provides:
+ libegl1-mesa-dev,
+Replaces:
+ libegl1-mesa-dev,
+Conflicts:
+ libegl1-mesa-dev,
 Description: free implementation of the EGL API -- development files
  This package contains the development environment required for compiling
  programs against EGL native platform graphics interface library.
@@ -215,7 +270,12 @@ Depends:
 Pre-Depends: ${misc:Pre-Depends},
  dpkg (>= 1.15.6~),
 Multi-Arch: same
-Replaces: libegl1-mesa-9.1 (<= 8.0.1-0ubuntu2)
+Provides:
+ libegl1-mesa-drivers,
+Conflicts:
+ libegl1-mesa-drivers,
+Replaces:
+ libegl1-mesa-drivers,
 Description: free implementation of the EGL API -- hardware drivers
  This package contains the EGL native platform graphics interface library.
  EGL provides a platform-agnostic mechanism for creating rendering surfaces
@@ -232,6 +292,12 @@ Pre-Depends: dpkg (>= 1.15.6~)
 Depends:
  libegl1-mesa-9.1-drivers (= ${binary:Version}),
  ${misc:Depends},
+Provides:
+ libegl1-mesa-drivers-dbg,
+Conflicts:
+ libegl1-mesa-drivers-dbg,
+Replaces:
+ libegl1-mesa-drivers-dbg,
 Multi-Arch: same
 Description: free implementation of the EGL API -- driver debugging symbols
  This package contains the EGL native platform graphics interface library.
@@ -247,9 +313,15 @@ Architecture: linux-any kfreebsd-any
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
-Provides: libopenvg1
-Conflicts: libopenvg1
-Replaces: libopenvg1
+Provides:
+ libopenvg1,
+ libopenvg1-mesa,
+Conflicts:
+ libopenvg1,
+ libopenvg1-mesa,
+Replaces:
+ libopenvg1,
+ libopenvg1-mesa,
 Pre-Depends: ${misc:Pre-Depends},
  dpkg (>= 1.15.6~),
 Multi-Arch: same
@@ -269,6 +341,12 @@ Depends:
  libopenvg1-mesa-9.1 (= ${binary:Version}),
  ${misc:Depends},
 Multi-Arch: same
+Provides:
+ libopenvg1-mesa-dbg,
+Conflicts:
+ libopenvg1-mesa-dbg,
+Replaces:
+ libopenvg1-mesa-dbg,
 Description: free implementation of the OpenVG API -- debugging symbols
  This package contains the mesa implementation of the OpenVG 2D acceleration
  library.  OpenVG provides a device independent and vendor-neutral interface
@@ -286,6 +364,12 @@ Depends:
  libopenvg1-mesa-9.1 (= ${binary:Version}),
  libegl1-mesa-9.1-dev,
  ${misc:Depends},
+Provides:
+ libopenvg1-mesa-dev,
+Conflicts:
+ libopenvg1-mesa-dev,
+Replaces:
+ libopenvg1-mesa-dev,
 Description: free implementation of the OpenVG API -- development files
  This package contains the mesa implementation of the OpenVG 2D acceleration
  library.  OpenVG provides a device independent and vendor-neutral interface
@@ -303,9 +387,13 @@ Depends:
  libglapi-mesa-9.1 (= ${binary:Version}),
  ${shlibs:Depends},
  ${misc:Depends},
-Provides: libgles1
-Conflicts: libgles1
-Replaces: libgles1
+Provides:
+ libgles1,
+ libgles1-mesa,
+Conflicts:
+ libgles1,
+Replaces:
+ libgles1,
 Pre-Depends: ${misc:Pre-Depends},
  dpkg (>= 1.15.6~),
 Multi-Arch: same
@@ -321,11 +409,18 @@ Package: libgles1-mesa-9.1-dbg
 Section: debug
 Priority: extra
 Architecture: linux-any kfreebsd-any
-Pre-Depends: dpkg (>= 1.15.6~)
+Pre-Depends:
+ dpkg (>= 1.15.6~),
 Depends:
  libgles1-mesa-9.1 (= ${binary:Version}),
  ${misc:Depends},
 Multi-Arch: same
+Provides:
+ libgles1-mesa-dbg,
+Conflicts:
+ libgles1-mesa-dbg,
+Replaces:
+ libgles1-mesa-dbg,
 Description: free implementation of the OpenGL|ES 1.x API -- debugging symbols
  OpenGL|ES is a cross-platform API for full-function 2D and 3D graphics on
  embedded systems - including consoles, phones, appliances and vehicles.
@@ -344,6 +439,12 @@ Depends:
  libgles1-mesa-9.1 (= ${binary:Version}),
  libegl1-mesa-9.1-dev,
  ${misc:Depends},
+Provides:
+ libgles1-mesa-dbg,
+Conflicts:
+ libgles1-mesa-dbg,
+Replaces:
+ libgles1-mesa-dbg,
 Description: free implementation of the OpenGL|ES 1.x API -- development files
  OpenGL|ES is a cross-platform API for full-function 2D and 3D graphics on
  embedded systems - including consoles, phones, appliances and vehicles.
@@ -362,9 +463,13 @@ Depends:
  libglapi-mesa-9.1 (= ${binary:Version}),
  ${shlibs:Depends},
  ${misc:Depends},
-Provides: libgles2
-Conflicts: libgles2
-Replaces: libgles2
+Provides:
+ libgles2,
+ libgles2-mesa,
+Conflicts:
+ libgles2,
+Replaces:
+ libgles2,
 Pre-Depends: ${misc:Pre-Depends},
  dpkg (>= 1.15.6~),
 Multi-Arch: same
@@ -386,6 +491,12 @@ Depends:
  libgles2-mesa-9.1 (= ${binary:Version}),
  ${misc:Depends},
 Multi-Arch: same
+Provides:
+ libgles2-mesa-dbg,
+Conflicts:
+ libgles2-mesa-dbg,
+Replaces:
+ libgles2-mesa-dbg,
 Description: free implementation of the OpenGL|ES 2.x API -- debugging symbols
  OpenGL|ES is a cross-platform API for full-function 2D and 3D graphics on
  embedded systems - including consoles, phones, appliances and vehicles.
@@ -405,6 +516,12 @@ Depends:
  libgles2-mesa-9.1 (= ${binary:Version}),
  libegl1-mesa-9.1-dev,
  ${misc:Depends},
+Provides:
+ libgles2-mesa-dev,
+Conflicts:
+ libgles2-mesa-dev,
+Replaces:
+ libgles2-mesa-dbg,
 Description: free implementation of the OpenGL|ES 2.x API -- development files
  OpenGL|ES is a cross-platform API for full-function 2D and 3D graphics on
  embedded systems - including consoles, phones, appliances and vehicles.
@@ -423,9 +540,16 @@ Architecture: any
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
-Pre-Depends: ${misc:Pre-Depends},
+Pre-Depends:
+ ${misc:Pre-Depends},
  dpkg (>= 1.15.6~),
 Multi-Arch: same
+Provides:
+ libglapi-mesa,
+Conflicts:
+ libglapi-mesa,
+Replaces:
+ libglapi-mesa,
 Description: free implementation of the GL API -- shared library
  The Mesa GL API module is responsible for dispatching all the gl*
  functions. It is intended to be mainly used by both the libgles1-mesa
@@ -440,6 +564,12 @@ Depends:
  libglapi-mesa-9.1 (= ${binary:Version}),
  ${misc:Depends},
 Multi-Arch: same
+Provides:
+ libglapi-mesa-dbg,
+Conflicts:
+ libglapi-mesa-dbg,
+Replaces:
+ libglapi-mesa-dbg,
 Description: free implementation of the GL API -- debugging symbols
  The Mesa GL API module is responsible for dispatching all the gl*
  functions. It is intended to be mainly used by both the libgles1-mesa
@@ -456,9 +586,15 @@ Depends:
  ${misc:Depends}
 Recommends:
  libgl1-mesa-9.1-dri (>= 7.2),
-Conflicts: libgl1, libgl1-mesa-dri (<< 6.4.0)
-Replaces: libgl1, libgl1-mesa-dri (<< 6.4.0)
-Provides: libgl1
+Conflicts:
+ libgl1,
+ libgl1-mesa-dri (<< 6.4.0),
+Replaces:
+ libgl1,
+ libgl1-mesa-dri (<< 6.4.0),
+Provides:
+ libgl1,
+ libgl1-mesa-glx,
 Breaks:
  libgl1-nvidia-alternatives (<= 275.09.07-1),
  fglrx-glx (<< 1:11-6-1),
@@ -485,11 +621,18 @@ Package: libgl1-mesa-9.1-glx-dbg
 Section: debug
 Priority: extra
 Architecture: any
-Pre-Depends: dpkg (>= 1.15.6~)
+Pre-Depends:
+ dpkg (>= 1.15.6~),
 Depends:
  libgl1-mesa-9.1-glx (= ${binary:Version}),
  ${misc:Depends},
 Multi-Arch: same
+Provides:
+ libgl1-mesa-glx-dbg,
+Conflicts:
+ libgl1-mesa-glx-dbg,
+Replaces:
+ libgl1-mesa-glx-dbg,
 Description: Debugging symbols for the Mesa GLX runtime
  This version of Mesa provides GLX and DRI capabilities: it is capable of
  both direct and indirect rendering.  For direct rendering, it can use DRI
@@ -534,10 +677,19 @@ Pre-Depends: dpkg (>= 1.15.6~),
 Depends:
  ${shlibs:Depends},
  ${misc:Depends}
-Recommends: libtxc-dxtn0
-Suggests: libglide3
-Conflicts: xlibmesa-dri (<< 1:7.0.0)
-Replaces: xlibmesa-dri (<< 1:7.0.0), libgl1-mesa-dri-experimental (<< 7.11.1)
+Recommends:
+ libtxc-dxtn0,
+Suggests:
+ libglide3,
+Provides:
+ libgl1-mesa-dri,
+Conflicts:
+ libgl1-mesa-dri,
+ xlibmesa-dri (<< 1:7.0.0),
+Replaces:
+ libgl1-mesa-dri,
+ xlibmesa-dri (<< 1:7.0.0),
+ libgl1-mesa-dri-experimental (<< 7.11.1),
 Breaks:
  xserver-xorg-core (<< 2:1.10.2-2),
  xserver-xorg-core-no-multiarch,
@@ -566,7 +718,13 @@ Pre-Depends: dpkg (>= 1.15.6~)
 Depends:
  libgl1-mesa-9.1-dri (= ${binary:Version}),
  ${misc:Depends},
-Replaces: libgl1-mesa-dri-experimental-dbg (<< 7.11.1)
+Provides:
+ libgl1-mesa-dri-dbg,
+Replaces:
+ libgl1-mesa-dri-dbg,
+ libgl1-mesa-dri-experimental-dbg (<< 7.11.1),
+Conflicts:
+ libgl1-mesa-dri-dbg,
 Multi-Arch: same
 Description: Debugging symbols for the Mesa DRI modules
  This version of Mesa provides GLX and DRI capabilities: it is capable of
@@ -589,6 +747,12 @@ Depends:
  ${shlibs:Depends},
  libgl1-mesa-9.1-dri (>= 7.11.1) [linux-any],
  ${misc:Depends},
+Provides:
+ libgl1-mesa-dri-experimental,
+Conflicts:
+ libgl1-mesa-dri-experimental,
+Replaces:
+ libgl1-mesa-dri-experimental,
 Breaks:
  xserver-xorg-core (<< 2:1.10.2-2),
  xserver-xorg-core-no-multiarch,
@@ -616,6 +780,12 @@ Pre-Depends: dpkg (>= 1.15.6~)
 Depends:
  libgl1-mesa-9.1-dri-experimental (= ${binary:Version}),
  ${misc:Depends},
+Provides:
+ libgl1-mesa-dri-experimental-dbg,
+Conflicts:
+ libgl1-mesa-dri-experimental-dbg,
+Replaces:
+ libgl1-mesa-dri-experimental-dbg,
 Multi-Arch: same
 Description: Debugging symbols for the experimental Mesa DRI modules
  This version of Mesa provides GLX and DRI capabilities: it is capable of
@@ -649,9 +819,18 @@ Depends:
  x11proto-dri2-dev (>= 2.6),
  x11proto-gl-dev (>= 1.4.14),
  ${misc:Depends},
-Conflicts: libgl-dev, libgl1-mesa-dri-dev
-Replaces: libgl-dev, libgl1-mesa-dri-dev
-Provides: libgl-dev, libgl1-mesa-dri-dev
+Conflicts:
+ libgl-dev,
+ libgl1-mesa-dev,
+ libgl1-mesa-dri-dev,
+Replaces:
+ libgl-dev,
+ libgl1-mesa-dev,
+ libgl1-mesa-dri-dev,
+Provides:
+ libgl-dev,
+ libgl1-mesa-dev,
+ libgl1-mesa-dri-dev,
 Description: free implementation of the OpenGL API -- GLX development files
  This version of Mesa provides GLX and DRI capabilities: it is capable of
  both direct and indirect rendering.  For direct rendering, it can use DRI
@@ -666,12 +845,22 @@ Description: free implementation of the OpenGL API -- GLX development files
 Package: mesa-9.1-common-dev
 Section: libdevel
 Architecture: any
-Replaces: xlibmesa-gl-dev (<< 1:7), xlibosmesa-dev, libgl1-mesa-swx11-dev (<< 6.5.2), libgl1-mesa-dev (<< 7.5~rc4-2)
-Pre-Depends: dpkg (>= 1.15.6~),
+Pre-Depends:
+ dpkg (>= 1.15.6~),
 Depends:
  libx11-dev,
  libdrm-dev [!hurd-any],
  ${misc:Depends},
+Provides:
+ mesa-common-dev,
+Conflicts:
+ mesa-common-dev,
+Replaces:
+ mesa-common-dev,
+ xlibmesa-gl-dev (<< 1:7),
+ xlibosmesa-dev,
+ libgl1-mesa-swx11-dev (<< 6.5.2),
+ libgl1-mesa-dev (<< 7.5~rc4-2),
 Description: Developer documentation for Mesa
  This package includes the specifications for the Mesa-specific OpenGL
  extensions, the complete set of release notes and the development header
@@ -683,9 +872,16 @@ Architecture: any
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
-Replaces: libgl1-mesa-swx11 (<< 6.5.2)
-Pre-Depends: ${misc:Pre-Depends},
+Pre-Depends:
+ ${misc:Pre-Depends},
  dpkg (>= 1.15.6~),
+Provides:
+ libosmesa6,
+Conflicts:
+ libosmesa6,
+Replaces:
+ libosmesa6,
+ libgl1-mesa-swx11 (<< 6.5.2)
 Multi-Arch: same
 Description: Mesa Off-screen rendering extension
  OSmesa is a Mesa extension that allows programs to render to an
@@ -703,9 +899,21 @@ Depends:
  libosmesa6 (= ${binary:Version}),
  mesa-9.1-common-dev (= ${binary:Version}) | libgl-dev,
  ${misc:Depends},
-Conflicts: xlibosmesa-dev, libosmesa4-dev, libosmesa-dev
-Replaces: xlibosmesa-dev, libosmesa-dev, libgl1-mesa-swx11-dev (<< 6.5.2), mesa-common-dev (<< 6.5.2)
-Provides: xlibosmesa-dev, libosmesa-dev
+Provides:
+ libosmesa6-dev,
+ xlibosmesa-dev,
+ libosmesa-dev,
+Conflicts:
+ libosmesa6-dev,
+ xlibosmesa-dev,
+ libosmesa4-dev,
+ libosmesa-dev,
+Replaces:
+ libosmesa6-dev,
+ xlibosmesa-dev,
+ libosmesa-dev,
+ libgl1-mesa-swx11-dev (<< 6.5.2),
+ mesa-common-dev (<< 6.5.2)
 Description: Mesa Off-screen rendering extension -- development files
  This package provides the required environment for developing programs
  that use the off-screen rendering extension of Mesa.

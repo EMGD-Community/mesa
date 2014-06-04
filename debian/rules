@@ -192,10 +192,10 @@ confflags-swx11+glu-i386-i686 = \
 	CFLAGS="$(CFLAGS) -march=i686" \
 	CXXFLAGS="$(CXXFLAGS) -march=i686"
 
-autotools_files = bin/config.guess bin/config.sub
+#autotools_files = bin/config.guess bin/config.sub
 
 configure: $(QUILT_STAMPFN) configure.ac
-	for file in $(autotools_files); do cp $$file $$file.pristine; done
+	#for file in $(autotools_files); do cp $$file $$file.pristine; done
 	autoreconf -vfi
 
 # list the configurations that will built
@@ -270,7 +270,7 @@ clean: unpatch
 	rm -rf $(STAMP_DIR)
 	for file in debian/*.in; do rm -f $${file%%.in}; done
 	# Those are auto-updated, grr:
-	for file in $(autotools_files); do if [ -f $$file.pristine ]; then mv -f $$file.pristine $$file; fi; done
+	#for file in $(autotools_files); do if [ -f $$file.pristine ]; then mv -f $$file.pristine $$file; fi; done
 	ln -sf minstall bin/install-sh
 
 	# And for pkgstriptranslation's benefit…

@@ -1,2 +1,2 @@
-dri/usr/lib/${DEB_HOST_MULTIARCH}/libGLESv2.so.2*  usr/lib/${DEB_HOST_MULTIARCH}/mesa-egl
-dri/usr/lib/${DEB_HOST_MULTIARCH}/egl/st_GLESv2.so usr/lib/${DEB_HOST_MULTIARCH}/mesa-egl/egl
+dri/usr/lib/${DEB_HOST_MULTIARCH}/libGLESv2.so.2*  usr/lib/${DEB_HOST_MULTIARCH}/mesa-7.9-egl
+dri/usr/lib/${DEB_HOST_MULTIARCH}/egl/st_GLESv2.so usr/lib/${DEB_HOST_MULTIARCH}/mesa-7.9-egl/egl

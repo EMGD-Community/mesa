@@ -1,1 +1,1 @@
-usr/lib/${DEB_HOST_MULTIARCH}/libGL.so.* usr/lib/${DEB_HOST_MULTIARCH}/mesa/
+usr/lib/${DEB_HOST_MULTIARCH}/libGL.so.* usr/lib/${DEB_HOST_MULTIARCH}/mesa-7.9/

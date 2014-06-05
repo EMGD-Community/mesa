@@ -52,7 +52,7 @@ include /usr/share/quilt/quilt.make
 
 confflags-common = \
 	--disable-selinux \
-    --disable-glu \
+	--disable-glu \
 	--disable-glut \
 	--disable-glw \
 	--enable-motif \
@@ -296,9 +296,9 @@ binary-arch: install
 
 	# Create an ld.so.conf which says where to find libGL from Mesa
 	echo "/usr/lib/$(DEB_HOST_MULTIARCH)/mesa" \
-	> $(CURDIR)/debian/libgl1-mesa-7.9-glx/usr/lib/$(DEB_HOST_MULTIARCH)/mesa/ld.so.conf
+	> $(CURDIR)/debian/libgl1-mesa-7.9-glx/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-7.9/ld.so.conf
 	echo "/usr/lib/$(DEB_HOST_MULTIARCH)/mesa" \
-	> $(CURDIR)/debian/libgl1-mesa-7.9-swx11/usr/lib/$(DEB_HOST_MULTIARCH)/mesa/ld.so.conf
+	> $(CURDIR)/debian/libgl1-mesa-7.9-swx11/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-7.9/ld.so.conf
 
 	# Empty directory for the alternative
 	mkdir -p $(CURDIR)/debian/libgl1-mesa-7.9-glx/usr/lib/xorg/x11-extra-modules
@@ -307,7 +307,7 @@ binary-arch: install
 	# Create an ld.so.conf which says where to find libEGL, libGLES{1,2} 
 	# and libOpenVG from Mesa.
 	echo "/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-egl" \
-	> $(CURDIR)/debian/libegl1-mesa-7.9/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-egl/ld.so.conf
+	> $(CURDIR)/debian/libegl1-mesa-7.9/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-7.9-egl/ld.so.conf
 
 	dh_installman -s
 	dh_lintian -s
@@ -331,14 +331,14 @@ binary-arch: install
 	set -e ; for PACKAGE in \
 		libegl1-mesa-7.9 libgles1-mesa-7.9 libgles2-mesa-7.9 libopenvg1-mesa-7.9 ; do \
 			dh_makeshlibs -p$$PACKAGE -- -c4 \
-			-edebian/$$PACKAGE/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-egl/\* \
+			-edebian/$$PACKAGE/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-7.9-egl/\* \
 		; done
 
 	dh_makeshlibs -s --remaining-packages -- -c4
 	##
 	dh_installdeb -s
-	dh_shlibdeps -s -l/usr/lib/$(DEB_HOST_MULTIARCH)/mesa:\
-/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-egl
+	dh_shlibdeps -s -l/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-7.9:\
+/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-7.9-egl
 	dh_gencontrol -s
 	dh_md5sums -s
 	dh_builddeb -s

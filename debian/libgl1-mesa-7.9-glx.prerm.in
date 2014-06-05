@@ -8,7 +8,7 @@ THIS_SCRIPT=prerm
 case "$1" in
   remove)
   # Use alternatives to make it easier to switch between Mesa and 3rd party modules
-  update-alternatives --remove ${DEB_HOST_MULTIARCH}_gl_conf /usr/lib/${DEB_HOST_MULTIARCH}/GL/ld.so.conf
+  update-alternatives --remove ${DEB_HOST_MULTIARCH}_gl_conf /usr/lib/${DEB_HOST_MULTIARCH}/mesa-7.9/ld.so.conf
 
   # explicit ldconfig due to alternatives
   ldconfig

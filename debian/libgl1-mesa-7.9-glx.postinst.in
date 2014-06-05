@@ -10,7 +10,7 @@ case "$1" in
   # Use alternatives to make it easier to switch between Mesa and 3rd party modules
   update-alternatives --force \
     --install /etc/ld.so.conf.d/${DEB_HOST_MULTIARCH}_GL.conf ${DEB_HOST_MULTIARCH}_gl_conf \
-    /usr/lib/${DEB_HOST_MULTIARCH}/mesa/ld.so.conf 550 \
+    /usr/lib/${DEB_HOST_MULTIARCH}/mesa-7.9/ld.so.conf 550 \
     --slave /usr/lib/${DEB_HOST_MULTIARCH}/xorg/extra-modules ${DEB_HOST_MULTIARCH}_xorg_extra_modules /usr/lib/${DEB_HOST_MULTIARCH}/xorg/x11-extra-modules
 
   # ldconfig needs to be run immediately as we're changing /etc/ld.so.conf.d/ with

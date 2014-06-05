@@ -20,6 +20,7 @@ AM_CPPFLAGS =							\
 	-I$(top_srcdir)/include					\
 	-I$(top_srcdir)/src/mapi				\
 	-I$(top_builddir)/src/mapi                              \
+	-I$(top_builddir)/src/mapi                              \
 	-DMAPI_MODE_GLAPI					\
 	-DMAPI_ABI_HEADER=\"shared-glapi/glapi_mapi_tmp.h\"
 

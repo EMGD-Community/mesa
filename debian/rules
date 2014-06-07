@@ -295,9 +295,9 @@ binary-arch: install
 	dh_install -s --list-missing
 
 	# Create an ld.so.conf which says where to find libGL from Mesa
-	echo "/usr/lib/$(DEB_HOST_MULTIARCH)/mesa" \
+	echo "/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-7.9" \
 	> $(CURDIR)/debian/libgl1-mesa-7.9-glx/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-7.9/ld.so.conf
-	echo "/usr/lib/$(DEB_HOST_MULTIARCH)/mesa" \
+	echo "/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-7.9" \
 	> $(CURDIR)/debian/libgl1-mesa-7.9-swx11/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-7.9/ld.so.conf
 
 	# Empty directory for the alternative
@@ -306,7 +306,7 @@ binary-arch: install
 
 	# Create an ld.so.conf which says where to find libEGL, libGLES{1,2} 
 	# and libOpenVG from Mesa.
-	echo "/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-egl" \
+	echo "/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-7.9-egl" \
 	> $(CURDIR)/debian/libegl1-mesa-7.9/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-7.9-egl/ld.so.conf
 
 	dh_installman -s

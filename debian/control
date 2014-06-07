@@ -33,7 +33,6 @@ Conflicts:
  nvidia-glx,
  mesag3,
  libgl1-mesa-swrast,
- libgl1-mesa-swx11
 Provides:
  libgl1,
  mesag3,
@@ -43,9 +42,6 @@ Replaces:
  libgl1,
  mesag3,
  libgl1-mesa-swrast,
- libgl1-mesa-swx11
-Breaks:
- libgl1-mesa-swx11
 Description: A free implementation of the OpenGL API -- runtime
  Mesa is a 3-D graphics library with an API which is very similar to
  that of OpenGL.  To the extent that Mesa utilizes the OpenGL command
@@ -172,12 +168,8 @@ Provides:
  libegl1-mesa
 Conflicts:
  libegl1-x11,
- libegl1-mesa
 Replaces:
  libegl1-x11,
- libegl1-mesa
-Breaks:
- libegl1-mesa
 Description: A free implementation of the EGL API -- runtime
  This package contains the EGL native platform graphics interface library.
  EGL provides a platform-agnostic mechanism for creating rendering surfaces
@@ -269,8 +261,6 @@ Depends:
  ${shlibs:Depends},
  ${misc:Depends},
 Provides: libopenvg1
-Conflicts: libopenvg1
-Replaces: libopenvg1
 Description: A free implementation of the OpenVG API -- runtime
  This package contains the mesa implementation of the OpenVG 2D acceleration
  library.  OpenVG provides a device independent and vendor-neutral interface 
@@ -318,8 +308,6 @@ Depends:
  ${shlibs:Depends},
  ${misc:Depends},
 Provides: libgles1
-Conflicts: libgles1
-Replaces: libgles1
 Description: A free implementation of the OpenGL|ES 1.x API -- runtime
  OpenGL|ES is a cross-platform API for full-function 2D and 3D graphics on 
  embedded systems - including consoles, phones, appliances and vehicles.
@@ -425,17 +413,13 @@ Depends:
  ${shlibs:Depends},
  ${misc:Depends}
 Recommends:
- libgl1-mesa-7.9-dri (>= 7.2)
+ libgl1-mesa-7.9-dri (>= 7.2),
 Conflicts:
  libgl1,
- libgl1-mesa-glx
 Replaces:
  libgl1,
- libgl1-mesa-glx
 Provides:
  libgl1,
- libgl1-mesa-glx
-Breaks:
  libgl1-mesa-glx
 Description: A free implementation of the OpenGL API -- GLX runtime
  This version of Mesa provides GLX and DRI capabilities: it is capable of

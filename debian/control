@@ -164,8 +164,7 @@ Depends:
 Recommends:
  libegl1-mesa-7.9-drivers
 Provides:
- libegl1-x11,
- libegl1-mesa
+ libegl1-mesa,
 Description: A free implementation of the EGL API -- runtime
  This package contains the EGL native platform graphics interface library.
  EGL provides a platform-agnostic mechanism for creating rendering surfaces

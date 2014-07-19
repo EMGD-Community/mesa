@@ -1,4 +1,4 @@
-Source: mesa-7.9
+ Source: mesa-7.9
 Section: graphics
 Priority: optional
 Maintainer: Ubuntu X-SWAT <ubuntu-x@lists.ubuntu.com>
@@ -382,8 +382,6 @@ Depends:
  ${misc:Depends}
 Recommends:
  libgl1-mesa-7.9-dri (>= 7.2),
-Conflicts:
- libgl1,
 Replaces:
  libgl1,
 Provides:

@@ -381,11 +381,8 @@ Depends:
  ${shlibs:Depends},
  ${misc:Depends}
 Recommends:
- libgl1-mesa-7.9-dri (>= 7.2),
-Replaces:
- libgl1,
+ libgl1-mesa-7.9-dri (>= ${binary:Version}),
 Provides:
- libgl1,
  libgl1-mesa-glx
 Description: A free implementation of the OpenGL API -- GLX runtime
  This version of Mesa provides GLX and DRI capabilities: it is capable of

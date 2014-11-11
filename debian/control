@@ -326,8 +326,6 @@ Depends:
  ${shlibs:Depends},
  ${misc:Depends},
 Provides: libgles2
-Conflicts: libgles2
-Replaces: libgles2
 Description: A free implementation of the OpenGL|ES 2.x API -- runtime
  OpenGL|ES is a cross-platform API for full-function 2D and 3D graphics on 
  embedded systems - including consoles, phones, appliances and vehicles.

@@ -1,6 +1,6 @@
 #!/usr/bin/make -f
-# debian/rules for the Debian mesa package
-# Copyright © 2006 Thierry Reding <thierry@gilfi.de>
+
+SHELL=/bin/bash -O extglob -c
 
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1

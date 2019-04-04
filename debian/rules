@@ -331,7 +331,7 @@ binary-arch: install
 	set -e ; for PACKAGE in \
 		libegl1-mesa-7.9 libgles1-mesa-7.9 libgles2-mesa-7.9 libopenvg1-mesa-7.9 ; do \
 			dh_makeshlibs -p$$PACKAGE -- -c4 \
-			-edebian/$$PACKAGE/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-7.9-egl/\* \
+			-edebian/$$PACKAGE/usr/lib/$(DEB_HOST_MULTIARCH)/mesa-7.9-egl/\*.so\* \
 		; done
 
 	dh_makeshlibs -s --remaining-packages -- -c4
